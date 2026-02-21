@@ -1,24 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends
 
-from apps.api.app.services.auth.supabase_auth import verify_supabase_bearer_token
+from apps.api.app.dependencies.auth import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.get("/me")
-def auth_me(authorization: str | None = Header(default=None)) -> dict[str, str]:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing Bearer token.")
-    token = authorization.split(" ", 1)[1].strip()
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing Bearer token.")
-    try:
-        user = verify_supabase_bearer_token(token)
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Auth verification failed: {exc}") from exc
-    return {"user_id": user["id"], "email": user.get("email") or ""}
-
+def auth_me(current_user: dict[str, str] = Depends(get_current_user)) -> dict[str, str]:
+    return current_user

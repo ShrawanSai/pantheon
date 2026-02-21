@@ -9,3 +9,4 @@ python-dotenv
 supabase
 arq
 psycopg[binary]
+aiosqlite
