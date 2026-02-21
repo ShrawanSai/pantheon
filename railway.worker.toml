@@ -2,7 +2,6 @@
 builder = "RAILPACK"
 
 [deploy]
-startCommand = "python -c \"import time; print('worker alive'); time.sleep(3600)\""
+startCommand = "python -m arq apps.api.app.workers.arq_worker.WorkerSettings"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
-
