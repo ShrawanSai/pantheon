@@ -1,6 +1,5 @@
 [build]
 builder = "RAILPACK"
-
 [deploy]
 startCommand = "python -m arq apps.api.app.workers.arq_worker.WorkerSettings"
 restartPolicyType = "ON_FAILURE"
