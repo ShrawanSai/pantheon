@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pantheon MVP Test Chat</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #f4f7fb; color: #12202f; }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 16px; }
+    .top, .panel { background: #fff; border: 1px solid #d9e2ec; border-radius: 10px; }
+    .top { padding: 12px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .top strong { margin-right: 4px; }
+    .btn { border: 1px solid #bfd3ea; background: #eef5ff; color: #0c4da2; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+    .btn.secondary { border-color: #d9e2ec; background: #fff; color: #22374b; }
+    select, input, textarea { border: 1px solid #c9d6e3; border-radius: 8px; padding: 8px; font-size: 13px; }
+    textarea { width: 100%; min-height: 72px; resize: vertical; }
+    .grid { display: grid; grid-template-columns: 1fr 360px; gap: 12px; }
+    .panel h3 { margin: 0; padding: 10px 12px; border-bottom: 1px solid #e2e9f0; font-size: 14px; background: #f9fbfe; }
+    .body { padding: 10px 12px; }
+    .chat { max-height: 500px; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+    .msg { border: 1px solid #d9e2ec; border-radius: 8px; padding: 8px; font-size: 13px; white-space: pre-wrap; }
+    .msg.user { border-left: 4px solid #0f6bff; background: #f6faff; }
+    .msg.assistant { border-left: 4px solid #0a8f66; background: #f3fdf8; }
+    .msg-head { font-size: 11px; color: #4d657d; margin-bottom: 4px; font-weight: 700; }
+    .muted { color: #5f7081; font-size: 12px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+    .steps { max-height: 500px; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+    .step { border: 1px solid #d9e2ec; border-radius: 8px; padding: 8px; font-size: 12px; background: #fff; }
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid #c8d8ec;
+      border-top-color: #0f6bff;
+      border-radius: 50%;
+      display: inline-block;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hidden { display: none !important; }
+    code { background: #f1f5f9; border: 1px solid #dbe5ef; border-radius: 6px; padding: 2px 6px; }
+    @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <strong>Session:</strong> <code id="sessionId">none</code>
+      <strong>Current:</strong> <code id="currentMode">-</code>
+      <strong>Pending:</strong> <code id="pendingMode">-</code>
+      <button class="btn" id="newSessionBtn">New Session</button>
+      <select id="modeSelect">
+        <option value="manual">manual/tag</option>
+        <option value="roundtable" selected>roundtable</option>
+        <option value="orchestrator">orchestrator</option>
+      </select>
+      <button class="btn secondary" id="setModeBtn">Set Mode (next turn)</button>
+      <strong>Orchestrator Manager:</strong>
+      <select id="managerAlias"></select>
+      <button class="btn secondary" id="saveManagerBtn">Save</button>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <h3>Chat</h3>
+        <div class="body">
+          <div class="row">
+            <label class="muted">Tagged agents (manual mode): comma-separated IDs, e.g. <code>researcher,writer</code></label>
+          </div>
+          <div class="row">
+            <input id="tagsInput" style="width:100%;" placeholder="researcher,writer">
+          </div>
+          <div class="row">
+            <textarea id="messageInput" placeholder="Ask your question..."></textarea>
+          </div>
+          <div class="row">
+            <button class="btn" id="sendBtn">Send</button>
+            <span id="loadingWrap" class="hidden"><span class="spinner"></span><span class="muted">Agents are responding...</span></span>
+            <span class="muted">Modes implemented: manual/tag, roundtable, orchestrator.</span>
+          </div>
+          <hr style="border:none;border-top:1px solid #e2e9f0;margin:10px 0;">
+          <div class="chat" id="chatBox"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Turn Steps</h3>
+        <div class="body">
+          <div class="muted" style="margin-bottom:8px;">
+            3 agents:
+            <code>researcher(deepseek)</code>,
+            <code>writer(gpt_oss)</code>,
+            <code>reviewer(qwen)</code>
+          </div>
+          <div class="steps" id="stepsBox"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let sessionId = null;
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+      if (!res.ok) {
+        let detail = "request failed";
+        try {
+          const body = await res.json();
+          detail = body.detail || JSON.stringify(body);
+        } catch (_) {}
+        throw new Error(detail);
+      }
+      return res.json();
+    }
+
+    function setSessionUi(session) {
+      document.getElementById("sessionId").textContent = session.id || session.session_id || "none";
+      document.getElementById("currentMode").textContent = session.current_mode || "-";
+      document.getElementById("pendingMode").textContent = session.pending_mode || "-";
+    }
+
+    function renderMessages(messages) {
+      const box = document.getElementById("chatBox");
+      box.innerHTML = "";
+      messages.forEach((m) => {
+        const el = document.createElement("div");
+        el.className = "msg " + (m.role === "user" ? "user" : "assistant");
+        const who = m.role === "assistant" && m.agent_name ? m.agent_name : m.role;
+        const head = document.createElement("div");
+        head.className = "msg-head";
+        head.textContent = `${who} · ${m.mode}`;
+        const body = document.createElement("div");
+        body.textContent = m.content;
+        el.appendChild(head);
+        el.appendChild(body);
+        box.appendChild(el);
+      });
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function renderSteps(steps) {
+      const box = document.getElementById("stepsBox");
+      box.innerHTML = "";
+      steps.forEach((s, i) => {
+        const el = document.createElement("div");
+        el.className = "step";
+        el.textContent = `#${i + 1} ${s.agent_name} [${s.model_alias}]\n${s.output_text}`;
+        box.appendChild(el);
+      });
+    }
+
+    function appendMessage(m) {
+      const box = document.getElementById("chatBox");
+      const el = document.createElement("div");
+      el.className = "msg " + (m.role === "user" ? "user" : "assistant");
+      const who = m.role === "assistant" && m.agent_name ? m.agent_name : m.role;
+      const head = document.createElement("div");
+      head.className = "msg-head";
+      head.textContent = `${who} · ${m.mode}`;
+      const body = document.createElement("div");
+      body.textContent = m.content;
+      el.appendChild(head);
+      el.appendChild(body);
+      box.appendChild(el);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function appendStep(s, indexHint) {
+      const box = document.getElementById("stepsBox");
+      const el = document.createElement("div");
+      el.className = "step";
+      el.textContent = `#${indexHint} ${s.agent_name} [${s.model_alias}]\n${s.output_text}`;
+      box.appendChild(el);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    async function refreshModels() {
+      const models = await api("/api/models");
+      const manager = document.getElementById("managerAlias");
+      manager.innerHTML = "";
+      models.models.forEach((m) => {
+        const opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = m;
+        manager.appendChild(opt);
+      });
+      const current = await api("/api/admin/orchestrator-model");
+      manager.value = current.orchestrator_manager_alias;
+    }
+
+    async function createSession() {
+      const mode = document.getElementById("modeSelect").value;
+      const s = await api("/api/session", { method: "POST", body: JSON.stringify({ mode }) });
+      sessionId = s.session_id;
+      const session = await api(`/api/session/${sessionId}`);
+      setSessionUi(session);
+      renderMessages([]);
+      renderSteps([]);
+    }
+
+    async function setMode() {
+      if (!sessionId) throw new Error("Create a session first");
+      const mode = document.getElementById("modeSelect").value;
+      await api(`/api/session/${sessionId}/mode`, {
+        method: "POST",
+        body: JSON.stringify({ mode }),
+      });
+      const session = await api(`/api/session/${sessionId}`);
+      setSessionUi(session);
+    }
+
+    async function sendMessage() {
+      if (!sessionId) throw new Error("Create a session first");
+      const text = document.getElementById("messageInput").value.trim();
+      if (!text) return;
+      const selectedMode = document.getElementById("modeSelect").value;
+      const currentMode = document.getElementById("currentMode").textContent || "";
+      const pendingMode = document.getElementById("pendingMode").textContent || "";
+
+      // Apply dropdown mode automatically so it is used on this next send.
+      if (selectedMode && selectedMode !== currentMode && selectedMode !== pendingMode) {
+        await api(`/api/session/${sessionId}/mode`, {
+          method: "POST",
+          body: JSON.stringify({ mode: selectedMode }),
+        });
+        const updatedSession = await api(`/api/session/${sessionId}`);
+        setSessionUi(updatedSession);
+      }
+
+      const tagsRaw = document.getElementById("tagsInput").value.trim();
+      const tagged_agents = tagsRaw ? tagsRaw.split(",").map(s => s.trim()).filter(Boolean) : [];
+      const sendBtn = document.getElementById("sendBtn");
+      const loadingWrap = document.getElementById("loadingWrap");
+      sendBtn.disabled = true;
+      loadingWrap.classList.remove("hidden");
+      try {
+        appendMessage({ role: "user", mode: selectedMode || document.getElementById("currentMode").textContent || "?", content: text });
+
+        const res = await fetch(`/api/session/${sessionId}/chat/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, tagged_agents }),
+        });
+        if (!res.ok || !res.body) {
+          throw new Error("stream request failed");
+        }
+
+        renderSteps([]);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let stepCount = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const evt = JSON.parse(line);
+            if (evt.type === "step") {
+              stepCount += 1;
+              appendStep(evt.step, stepCount);
+              appendMessage({
+                role: "assistant",
+                agent_name: evt.step.agent_name,
+                mode: evt.mode,
+                content: evt.step.output_text,
+              });
+            } else if (evt.type === "done") {
+              if (evt.session) setSessionUi(evt.session);
+            } else if (evt.type === "error") {
+              throw new Error(evt.error || "unknown stream error");
+            }
+          }
+        }
+        document.getElementById("messageInput").value = "";
+      } finally {
+        loadingWrap.classList.add("hidden");
+        sendBtn.disabled = false;
+      }
+    }
+
+    async function saveManager() {
+      const model_alias = document.getElementById("managerAlias").value;
+      await api("/api/admin/orchestrator-model", {
+        method: "POST",
+        body: JSON.stringify({ model_alias }),
+      });
+      alert("Saved");
+    }
+
+    async function bootstrap() {
+      await refreshModels();
+      await createSession();
+    }
+
+    document.getElementById("newSessionBtn").addEventListener("click", () => createSession().catch(e => alert(e.message)));
+    document.getElementById("setModeBtn").addEventListener("click", () => setMode().catch(e => alert(e.message)));
+    document.getElementById("sendBtn").addEventListener("click", () => sendMessage().catch(e => alert(e.message)));
+    document.getElementById("saveManagerBtn").addEventListener("click", () => saveManager().catch(e => alert(e.message)));
+
+    bootstrap().catch((e) => alert(e.message));
+  </script>
+</body>
+</html>
