@@ -217,3 +217,7 @@ docs/
 *.pptx
 *.xlsx
 
+# Frontend build artifacts
+node_modules/
+apps/web/.next/
+
