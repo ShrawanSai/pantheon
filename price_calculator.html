@@ -1,0 +1,561 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pantheon â€” Session Estimator</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #08090d;
+  --surface: #0f1118;
+  --card: #141620;
+  --card2: #1a1d2e;
+  --border: #23273a;
+  --border-hi: #3b4168;
+  --text: #e8eaf0;
+  --dim: #7d84a0;
+  --muted: #4a5070;
+  --blue: #5b8af5;
+  --blue-soft: rgba(91,138,245,0.08);
+  --blue-glow: rgba(91,138,245,0.25);
+  --teal: #4fd1c5;
+  --teal-soft: rgba(79,209,197,0.08);
+  --amber: #f6c547;
+  --amber-soft: rgba(246,197,71,0.08);
+  --rose: #f47486;
+  --rose-soft: rgba(244,116,134,0.08);
+  --violet: #a78bfa;
+  --radius: 14px;
+  --radius-sm: 8px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+::selection{background:var(--blue);color:#fff}
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+.page{max-width:900px;margin:0 auto;padding:40px 24px 80px}
+
+/* HEADER */
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.brand-mark{
+  width:32px;height:32px;border-radius:8px;
+  background:linear-gradient(135deg,var(--blue),var(--violet));
+  display:flex;align-items:center;justify-content:center;
+  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;color:#fff;
+}
+.brand-name{font-size:18px;font-weight:600;letter-spacing:-0.3px}
+.page-subtitle{font-size:14px;color:var(--dim);margin-bottom:40px;line-height:1.6}
+
+/* SECTIONS */
+.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+@media(max-width:640px){.config-grid{grid-template-columns:1fr}}
+
+.card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px;transition:border-color 0.2s;
+}
+.card:hover{border-color:var(--border-hi)}
+.card-label{
+  font-size:11px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;
+  color:var(--muted);margin-bottom:14px;
+}
+.card-full{grid-column:1/-1}
+
+/* FORM */
+.field{margin-bottom:14px}
+.field:last-child{margin-bottom:0}
+.field-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.field-name{font-size:13px;color:var(--dim);font-weight:400}
+.field-val{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--blue)}
+
+select,input[type=number]{
+  width:100%;background:var(--card2);border:1px solid var(--border);border-radius:var(--radius-sm);
+  padding:10px 14px;font-size:13px;color:var(--text);font-family:'Outfit',sans-serif;outline:none;
+  transition:border-color 0.2s,box-shadow 0.2s;
+}
+select:focus,input[type=number]:focus{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-soft)}
+select{cursor:pointer;-webkit-appearance:none;appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='%234a5070'%3E%3Cpath d='M5 6L0 0h10z'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 14px center;padding-right:34px;
+}
+input[type=range]{
+  width:100%;-webkit-appearance:none;height:3px;background:var(--border);border-radius:2px;outline:none;margin:4px 0;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+  background:var(--blue);cursor:pointer;border:3px solid var(--bg);
+  box-shadow:0 0 0 1px var(--blue),0 2px 8px rgba(0,0,0,0.4);
+}
+input[type=number]{font-family:'JetBrains Mono',monospace;width:56px;text-align:center;padding:7px 6px;font-size:12px}
+
+/* AGENTS */
+.agents-list{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.agent-pill{
+  display:grid;grid-template-columns:36px 1fr 1fr 28px;gap:8px;align-items:center;
+  background:var(--card2);border:1px solid var(--border);border-radius:var(--radius-sm);
+  padding:8px 10px;transition:border-color 0.15s;
+}
+.agent-pill:hover{border-color:var(--border-hi)}
+.agent-idx{
+  font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;
+  color:var(--blue);text-align:center;
+}
+.agent-pill select{padding:7px 10px;font-size:12px;background:var(--surface)}
+.agent-rm{
+  width:28px;height:28px;border:none;background:transparent;color:var(--muted);
+  cursor:pointer;border-radius:6px;font-size:16px;display:flex;align-items:center;justify-content:center;
+  transition:all 0.15s;
+}
+.agent-rm:hover{background:var(--rose-soft);color:var(--rose)}
+.add-btn{
+  width:100%;padding:10px;background:transparent;border:1px dashed var(--border);
+  border-radius:var(--radius-sm);color:var(--muted);font-size:13px;cursor:pointer;
+  font-family:'Outfit',sans-serif;transition:all 0.2s;
+}
+.add-btn:hover{border-color:var(--blue);color:var(--blue);background:var(--blue-soft)}
+
+/* TOOLS */
+.tools-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:640px){.tools-grid{grid-template-columns:1fr}}
+.tool-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:8px 12px;background:var(--card2);border-radius:var(--radius-sm);
+  border:1px solid transparent;transition:border-color 0.15s;
+}
+.tool-row:hover{border-color:var(--border)}
+.tool-name{font-size:12px;color:var(--dim)}
+.tool-input{width:48px!important;padding:5px 4px!important}
+
+/* DIVIDER */
+.divider{height:1px;background:var(--border);margin:32px 0}
+
+/* RESULTS */
+.results-label{
+  font-size:12px;font-weight:600;letter-spacing:2px;text-transform:uppercase;
+  color:var(--dim);margin-bottom:20px;display:flex;align-items:center;gap:10px;
+}
+.results-label::after{content:'';flex:1;height:1px;background:var(--border)}
+
+.hero-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
+@media(max-width:640px){.hero-row{grid-template-columns:1fr}}
+.hero{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:22px 20px;position:relative;overflow:hidden;
+}
+.hero::after{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.hero.h-blue::after{background:linear-gradient(90deg,var(--blue),var(--violet))}
+.hero.h-teal::after{background:linear-gradient(90deg,var(--teal),#34d399)}
+.hero.h-amber::after{background:linear-gradient(90deg,var(--amber),#fb923c)}
+.hero-top{font-size:11px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px}
+.hero-num{font-family:'JetBrains Mono',monospace;font-size:36px;font-weight:600;line-height:1}
+.hero-note{font-size:12px;color:var(--dim);margin-top:8px}
+
+/* DETAIL TABLE */
+.detail{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;margin-bottom:16px;
+}
+.detail-head{
+  padding:14px 20px;font-size:11px;font-weight:600;letter-spacing:1.5px;
+  text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);
+  background:var(--card2);
+}
+.detail table{width:100%;border-collapse:collapse}
+.detail th{
+  text-align:left;padding:10px 20px;font-size:11px;font-weight:500;
+  color:var(--muted);letter-spacing:0.5px;border-bottom:1px solid var(--border);
+}
+.detail th:last-child{text-align:right}
+.detail td{padding:10px 20px;font-size:13px;border-bottom:1px solid rgba(35,39,58,0.6)}
+.detail td:last-child{text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px}
+.detail tr:last-child td{border-bottom:none}
+.detail tr.row-total td{font-weight:600;background:var(--card2);border-top:1px solid var(--border);color:var(--text)}
+
+/* TIER BARS */
+.tier-row{
+  display:grid;grid-template-columns:90px 1fr 60px;gap:12px;align-items:center;
+  padding:12px 0;
+}
+.tier-name-col{font-size:13px;font-weight:500}
+.tier-price{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace}
+.bar-track{height:8px;background:var(--card2);border-radius:4px;overflow:hidden;position:relative}
+.bar-fill{height:100%;border-radius:4px;transition:width 0.5s cubic-bezier(0.4,0,0.2,1)}
+.bar-marker{
+  position:absolute;top:-3px;width:2px;height:14px;background:var(--text);border-radius:1px;
+  transition:left 0.5s cubic-bezier(0.4,0,0.2,1);
+}
+.tier-pct{font-family:'JetBrains Mono',monospace;font-size:12px;text-align:right}
+
+/* FOOTER NOTE */
+.footnote{font-size:11px;color:var(--muted);text-align:center;margin-top:40px;line-height:1.6}
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="brand">
+    <div class="brand-mark">P</div>
+    <div class="brand-name">Session Estimator</div>
+  </div>
+  <div class="page-subtitle">Configure your Council Room to estimate credit usage and cost.</div>
+
+  <!-- CONFIG -->
+  <div class="config-grid">
+
+    <!-- SESSION -->
+    <div class="card">
+      <div class="card-label">Session</div>
+      <div class="field">
+        <div class="field-name" style="margin-bottom:6px">What are you doing?</div>
+        <select id="mode" onchange="onModeChange()">
+          <option value="roundtable">Round Table Discussion</option>
+          <option value="chat">Quick Chat</option>
+          <option value="docreview">Document Analysis</option>
+          <option value="webresearch">Web Research</option>
+          <option value="editing">Editing &amp; Rewriting</option>
+          <option value="orchestrator">Orchestrated Workflow</option>
+        </select>
+      </div>
+      <div class="field">
+        <div class="field-row"><span class="field-name">Conversation turns</span><span class="field-val" id="turns-v">8</span></div>
+        <input type="range" id="turns" min="1" max="20" value="8" oninput="$('turns-v').textContent=this.value;calc()">
+      </div>
+      <div class="field" id="doc-field" style="display:none">
+        <div class="field-row"><span class="field-name">Document size</span><span class="field-val" id="doc-v">~75 pages</span></div>
+        <input type="range" id="docsize" min="5000" max="200000" step="5000" value="50000" oninput="updateDocLabel();calc()">
+      </div>
+    </div>
+
+    <!-- AGENTS -->
+    <div class="card">
+      <div class="card-label">Your Agents</div>
+      <div class="agents-list" id="agents-list"></div>
+      <button class="add-btn" id="add-btn" onclick="addAgent()">+ Add agent</button>
+    </div>
+
+    <!-- TOOLS -->
+    <div class="card card-full">
+      <div class="card-label">Tools used in session</div>
+      <div class="tools-grid">
+        <div class="tool-row"><span class="tool-name">Web searches</span><input type="number" class="tool-input" id="t-search" value="2" min="0" max="50" onchange="calc()"></div>
+        <div class="tool-row"><span class="tool-name">Page fetches</span><input type="number" class="tool-input" id="t-fetch" value="0" min="0" max="50" onchange="calc()"></div>
+        <div class="tool-row"><span class="tool-name">PDF uploads</span><input type="number" class="tool-input" id="t-pdf" value="0" min="0" max="10" onchange="calc()"></div>
+        <div class="tool-row"><span class="tool-name">Code runs</span><input type="number" class="tool-input" id="t-code" value="0" min="0" max="20" onchange="calc()"></div>
+        <div class="tool-row"><span class="tool-name">Image generations</span><input type="number" class="tool-input" id="t-img" value="0" min="0" max="10" onchange="calc()"></div>
+        <div class="tool-row"><span class="tool-name">Knowledge lookups</span><input type="number" class="tool-input" id="t-rag" value="0" min="0" max="30" onchange="calc()"></div>
+      </div>
+    </div>
+
+    <!-- MONTHLY -->
+    <div class="card card-full">
+      <div class="card-label">Monthly Estimate</div>
+      <div class="field">
+        <div class="field-row"><span class="field-name">Sessions like this per month</span><span class="field-val" id="mo-v">20</span></div>
+        <input type="range" id="mo-sess" min="1" max="200" value="20" oninput="$('mo-v').textContent=this.value;calc()">
+      </div>
+    </div>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="divider"></div>
+  <div class="results-label">Estimated Usage</div>
+
+  <div id="output"></div>
+
+  <div class="footnote">
+    Estimates based on typical usage patterns. Actual credit consumption varies with conversation length, model behaviour, and caching.<br>
+    1 credit = 10,000 OE tokens where OE = (fresh * 0.35) + (cached * 0.10) + output. Price = $0.03/credit. First 2 tool calls/session are free. Model billing floor is 0.5x.
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+
+const MODELS={
+  'deepseek':  {n:'DeepSeek V3.x',      t:'Standard', m:1.00, c:'var(--teal)'},
+  'llama':     {n:'Llama 4 Scout',      t:'Economy',  m:0.38, c:'var(--teal)'},
+  'qwen':      {n:'Qwen3-235B',         t:'Economy',  m:0.17, c:'var(--teal)'},
+  'gptoss':    {n:'GPT-OSS-120B',       t:'Economy',  m:0.23, c:'var(--blue)'},
+  'kimi':      {n:'Kimi K2.x',          t:'Advanced', m:2.40, c:'var(--amber)'},
+  'glm':       {n:'GLM-4.7 class',      t:'Advanced', m:2.55, c:'var(--amber)'},
+  'gpt5mini':  {n:'GPT-5-mini',         t:'Advanced', m:2.25, c:'var(--blue)'},
+  'gpt41':     {n:'GPT-4.1',            t:'Premium',  m:10.0, c:'var(--violet)'},
+  'gpt4o':     {n:'GPT-4o',             t:'Premium',  m:12.5, c:'var(--violet)'},
+  'gpt5':      {n:'GPT-5 / 5.1',        t:'Premium',  m:11.25,c:'var(--rose)'},
+  'gpt52':     {n:'GPT-5.2',            t:'Premium',  m:15.75,c:'var(--rose)'},
+  'gemini':    {n:'Gemini Pro class',   t:'Premium',  m:14.0, c:'var(--violet)'},
+  'grok':      {n:'Grok class',         t:'Premium',  m:18.0, c:'var(--violet)'},
+  'sonnet':    {n:'Claude Sonnet class',t:'Premium',  m:18.0, c:'var(--violet)'},
+  'opus':      {n:'Claude Opus class',  t:'Ultra',    m:30.0, c:'var(--rose)'},
+};
+
+const RESP={short:400,medium:600,standard:800,long:1200};
+const TOOL_CR={search:1.0,fetch:0.4,pdf:2.0,code:1.6,img:4.0,rag:0.6};
+const TIERS=[
+  {n:'Starter',p:29,cr:495},
+  {n:'Pro',p:79,cr:1980},
+  {n:'Power',p:149,cr:4180},
+];
+const PRICE_PER_CREDIT=0.03;
+const MIN_MODEL_MULT=0.5;
+const billedMult=modelKey=>Math.max(MIN_MODEL_MULT,MODELS[modelKey].m);
+const fmtMult=v=>Number(v.toFixed(2)).toString();
+
+let agents=[
+  {model:'deepseek',resp:'standard'},
+  {model:'qwen',resp:'standard'},
+  {model:'sonnet',resp:'standard'},
+  {model:'deepseek',resp:'standard'},
+];
+
+function renderAgents(){
+  const c=$('agents-list');c.innerHTML='';
+  agents.forEach((a,i)=>{
+    const d=document.createElement('div');d.className='agent-pill';
+    d.innerHTML=`
+      <div class="agent-idx">${i+1}</div>
+      <select onchange="agents[${i}].model=this.value;calc()" style="font-size:12px">
+        ${Object.entries(MODELS).map(([k,v])=>`<option value="${k}"${k===a.model?' selected':''}>${v.n} · ${fmtMult(billedMult(k))}x</option>`).join('')}
+      </select>
+      <select onchange="agents[${i}].resp=this.value;calc()" style="font-size:12px">
+        <option value="short"${a.resp==='short'?' selected':''}>Short reply</option>
+        <option value="medium"${a.resp==='medium'?' selected':''}>Medium reply</option>
+        <option value="standard"${a.resp==='standard'?' selected':''}>Standard reply</option>
+        <option value="long"${a.resp==='long'?' selected':''}>Long reply</option>
+      </select>
+      ${agents.length>1?`<button class="agent-rm" onclick="agents.splice(${i},1);renderAgents();calc()">×</button>`:'<div></div>'}
+    `;
+    c.appendChild(d);
+  });
+  $('add-btn').style.display=agents.length>=12?'none':'block';
+}
+
+function addAgent(){
+  if(agents.length<12){agents.push({model:'deepseek',resp:'standard'});renderAgents();calc();}
+}
+
+function updateDocLabel(){
+  const v=parseInt($('docsize').value);
+  const pages=Math.round(v/670);
+  $('doc-v').textContent=`~${pages} pages`;
+}
+
+function onModeChange(){
+  const m=$('mode').value;
+  $('doc-field').style.display=m==='docreview'?'block':'none';
+  const defs={chat:[6,2],roundtable:[8,2],docreview:[6,0],webresearch:[6,12],editing:[8,0],orchestrator:[6,0]};
+  const[turns,searches]=defs[m]||[8,2];
+  $('turns').value=turns;$('turns-v').textContent=turns;
+  $('t-search').value=searches;
+  calc();
+}
+
+// â”€â”€ ENGINE â”€â”€
+function calc(){
+  const mode=$('mode').value;
+  const turns=+$('turns').value;
+  const docSize=+$('docsize').value;
+  const moSess=+$('mo-sess').value;
+
+  const numAgents=agents.length;
+  let responding;
+  if(mode==='chat') responding=Math.min(numAgents,2);
+  else if(mode==='orchestrator') responding=1;
+  else responding=numAgents;
+
+  // Identify responding agents for multiplier calc
+  const respAgents=mode==='orchestrator'
+    ?agents.slice(0,Math.min(turns,numAgents))
+    :mode==='chat'?agents.slice(0,Math.min(2,numAgents))
+    :agents;
+
+  const avgMult=respAgents.reduce((s,a)=>s+billedMult(a.model),0)/respAgents.length;
+  const avgResp=respAgents.reduce((s,a)=>s+RESP[a.resp],0)/respAgents.length;
+  const sysP=500;
+
+  // Simulate turns
+  let history=0,totalFresh=0,totalCached=0,totalOut=0;
+  const turnLog=[];
+
+  for(let t=0;t<turns;t++){
+    // Summarise at turn 8
+    if(t===8) history=Math.round(history*0.4);
+
+    const doc=(mode==='docreview')?docSize:0;
+    const r=mode==='orchestrator'?1:responding;
+
+    let tFresh=0,tCached=0,tOut=0;
+
+    for(let a=0;a<r;a++){
+      const agIdx=mode==='orchestrator'?(t%numAgents):a;
+      const ag=agents[Math.min(agIdx,numAgents-1)];
+      const respTok=RESP[ag.resp];
+
+      if(t===0){
+        tFresh+=doc+150; // user msg + doc (fresh first turn)
+        tCached+=sysP;
+      } else {
+        tFresh+=history+150;
+        tCached+=sysP+doc;
+      }
+      tOut+=respTok;
+    }
+
+    totalFresh+=tFresh;totalCached+=tCached;totalOut+=tOut;
+    turnLog.push({turn:t+1,fresh:tFresh,cached:tCached,out:tOut});
+
+    // Grow history
+    const contrib=150+tOut;
+    history+=mode==='orchestrator'?tOut+200:contrib;
+  }
+
+  const totalTokens=totalFresh+totalCached+totalOut;
+
+  // OE
+  const oe=(totalFresh*0.35)+(totalCached*0.10)+(totalOut*1.0);
+  const baseCredits=(oe/10000)*avgMult;
+
+  // Tools
+  const tools={
+    search:+$('t-search').value||0,
+    fetch:+$('t-fetch').value||0,
+    pdf:+$('t-pdf').value||0,
+    code:+$('t-code').value||0,
+    img:+$('t-img').value||0,
+    rag:+$('t-rag').value||0,
+  };
+  const totalCalls=Object.values(tools).reduce((a,b)=>a+b,0);
+  let freeLeft=2,toolCr=0;
+  for(const[k,cnt] of Object.entries(tools)){
+    if(!cnt)continue;
+    const free=Math.min(cnt,freeLeft);freeLeft-=free;
+    toolCr+=(cnt-free)*(TOOL_CR[k]||0);
+  }
+
+  const sessionCredits=baseCredits+toolCr;
+  const monthlyCredits=sessionCredits*moSess;
+
+  // Cost at overage rate
+  const sessionCost=sessionCredits*PRICE_PER_CREDIT;
+  const monthlyCost=monthlyCredits*PRICE_PER_CREDIT;
+
+  // â”€â”€ RENDER â”€â”€
+  const O=$('output');
+
+  // Chart max
+  const chartMax=Math.max(...turnLog.map(t=>t.fresh+t.cached+t.out),1);
+
+  O.innerHTML=`
+    <div class="hero-row">
+      <div class="hero h-blue">
+        <div class="hero-top">Per Session</div>
+        <div class="hero-num" style="color:var(--blue)">${sessionCredits.toFixed(1)}</div>
+        <div class="hero-note">credits Â· ${(totalTokens/1000).toFixed(0)}K tokens</div>
+      </div>
+      <div class="hero h-teal">
+        <div class="hero-top">Per Month (${moSess} sessions)</div>
+        <div class="hero-num" style="color:var(--teal)">${monthlyCredits.toFixed(0)}</div>
+        <div class="hero-note">credits Â· ${(totalTokens*moSess/1000000).toFixed(1)}M tokens</div>
+      </div>
+      <div class="hero h-amber">
+        <div class="hero-top">Estimated Cost</div>
+        <div class="hero-num" style="color:var(--amber)">$${monthlyCost<1?monthlyCost.toFixed(2):monthlyCost.toFixed(0)}</div>
+        <div class="hero-note">/month Â· $${sessionCost.toFixed(2)}/session</div>
+      </div>
+    </div>
+
+    <!-- TURN CHART -->
+    <div class="card" style="margin-bottom:16px;padding:20px">
+      <div class="card-label">Token growth per turn</div>
+      <div style="display:flex;align-items:flex-end;gap:3px;height:120px;margin-top:8px">
+        ${turnLog.map(t=>{
+          const total=t.fresh+t.cached+t.out;
+          const h=Math.max(4,(total/chartMax)*110);
+          const fP=t.fresh/total*100;
+          const cP=t.cached/total*100;
+          return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end">
+            <div title="T${t.turn}: ${(total/1000).toFixed(0)}K tokens" style="width:100%;height:${h}px;border-radius:3px 3px 0 0;background:linear-gradient(to top,var(--blue) ${fP}%,var(--violet) ${fP}% ${fP+cP}%,var(--teal) ${fP+cP}% 100%);opacity:0.75;min-width:6px"></div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--muted);margin-top:4px">${t.turn}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;gap:16px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim)"><div style="width:8px;height:8px;border-radius:2px;background:var(--blue);opacity:0.75"></div>Input</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim)"><div style="width:8px;height:8px;border-radius:2px;background:var(--violet);opacity:0.75"></div>Cached</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim)"><div style="width:8px;height:8px;border-radius:2px;background:var(--teal);opacity:0.75"></div>Output</div>
+      </div>
+    </div>
+
+    <!-- AGENT SUMMARY -->
+    <div class="detail" style="margin-bottom:16px">
+      <div class="detail-head">Your agents</div>
+      <table>
+        <tr><th>Agent</th><th>Model</th><th style="text-align:right">Speed</th></tr>
+        ${respAgents.map((a,i)=>{
+          const m=MODELS[a.model];
+          const effectiveMult=billedMult(a.model);
+          return `<tr><td style="color:var(--dim)">Agent ${i+1}</td><td><span style="color:${m.c}">${m.n}</span> <span style="font-size:11px;color:var(--muted)">${m.t} · ${fmtMult(effectiveMult)}x</span></td><td>${fmtMult(effectiveMult)}x</td></tr>`;
+        }).join('')}
+        <tr class="row-total"><td>Weighted average</td><td></td><td>${fmtMult(avgMult)}x</td></tr>
+      </table>
+    </div>
+
+    <!-- PLAN FIT -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-label">Plan fit â€” ${moSess} sessions/month</div>
+      ${TIERS.map(t=>{
+        const pct=monthlyCredits/t.cr*100;
+        const fillPct=Math.min(pct,100);
+        const col=pct<=85?'var(--teal)':pct<=110?'var(--amber)':'var(--rose)';
+        const fits=Math.floor(t.cr/sessionCredits);
+        const overage=Math.max(0,monthlyCredits-t.cr);
+        const overageCost=overage*PRICE_PER_CREDIT;
+        const totalPrice=t.p+(overageCost);
+        return `<div class="tier-row">
+          <div><div class="tier-name-col">${t.n}</div><div class="tier-price">$${t.p}/mo</div></div>
+          <div>
+            <div class="bar-track">
+              <div class="bar-fill" style="width:${fillPct}%;background:${col}"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:4px">
+              <span style="font-size:11px;color:var(--muted)">${t.cr} credits included</span>
+              <span style="font-size:11px;color:var(--dim)">${fits} sessions fit${overage>0?` · +$${overageCost.toFixed(2)} overage`:''}</span>
+            </div>
+          </div>
+          <div class="tier-pct" style="color:${col}">${pct.toFixed(0)}%</div>
+        </div>`;
+      }).join('')}
+    </div>
+
+    <!-- WHAT-IF -->
+    <div class="detail">
+      <div class="detail-head">Same session · different models</div>
+      <table>
+        <tr><th>If all agents were...</th><th style="text-align:right">Credits/session</th></tr>
+        ${[
+          {n:'Floor-priced models (0.5x minimum)',m:0.5},
+          {n:'DeepSeek baseline (1.0x)',m:1.0},
+          {n:'Advanced (Kimi 2.4x)',m:2.4},
+          {n:'OpenAI GPT-4.1 (10x)',m:10.0},
+          {n:'OpenAI GPT-5.2 (15.75x)',m:15.75},
+          {n:'Premium Sonnet/Grok (18x)',m:18.0},
+          {n:'Ultra Opus (30x)',m:30.0},
+        ].map(x=>{
+          const cr=(oe/10000)*Math.max(MIN_MODEL_MULT,x.m)+toolCr;
+          return `<tr><td style="color:var(--dim)">${x.n}</td><td>${cr.toFixed(1)}</td></tr>`;
+        }).join('')}
+      </table>
+    </div>
+  `;
+}
+
+// â”€â”€ INIT â”€â”€
+renderAgents();calc();
+</script>
+</body>
+</html>
+
