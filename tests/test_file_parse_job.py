@@ -165,7 +165,54 @@ class FileParseJobTests(unittest.TestCase):
         self.assertIsNone(row.parsed_text)
         self.assertIn("download failed", row.error_message or "")
 
+    def test_file_parse_returns_not_found_when_file_row_missing(self) -> None:
+        missing_file_id = str(uuid4())
+        downloader_called = False
+
+        async def fake_downloader(_storage_key: str) -> bytes:
+            nonlocal downloader_called
+            downloader_called = True
+            return b"unused"
+
+        result = asyncio.run(
+            file_parse(
+                {
+                    "session_factory": self.session_factory,
+                    "storage_downloader": fake_downloader,
+                },
+                missing_file_id,
+            )
+        )
+        self.assertEqual(result, {"status": "not_found", "file_id": missing_file_id})
+        self.assertFalse(downloader_called)
+
+    def test_file_parse_marks_completed_for_csv_and_normalizes_rows(self) -> None:
+        file_id = self._seed_uploaded_file(filename="scores.csv", storage_key="rooms/r1/f4/scores.csv")
+
+        async def fake_downloader(_storage_key: str) -> bytes:
+            return b"name,score\nalice,10\nbob,8\n"
+
+        result = asyncio.run(
+            file_parse(
+                {
+                    "session_factory": self.session_factory,
+                    "storage_downloader": fake_downloader,
+                },
+                file_id,
+            )
+        )
+        self.assertEqual(result["status"], "completed")
+
+        async def fetch_row() -> UploadedFile | None:
+            async with self.session_factory() as session:
+                return await session.get(UploadedFile, file_id)
+
+        row = asyncio.run(fetch_row())
+        self.assertIsNotNone(row)
+        self.assertEqual(row.parse_status, "completed")
+        self.assertEqual(row.parsed_text, "name | score\nalice | 10\nbob | 8")
+        self.assertIsNone(row.error_message)
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -30,8 +30,11 @@ class TavilySearchTool:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
                 "https://api.tavily.com/search",
+                headers={
+                    "Authorization": f"Bearer {settings.tavily_api_key}",
+                    "Content-Type": "application/json",
+                },
                 json={
-                    "api_key": settings.tavily_api_key,
                     "query": query,
                     "max_results": max_results,
                 },
@@ -61,4 +64,3 @@ _search_tool: SearchTool = TavilySearchTool()
 
 def get_search_tool() -> SearchTool:
     return _search_tool
-

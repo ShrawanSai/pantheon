@@ -42,8 +42,13 @@ from apps.api.app.services.orchestration.mode_executor import (
 from apps.api.app.services.orchestration.orchestrator_manager import route_turn
 from apps.api.app.services.orchestration.summary_extractor import extract_summary_structure
 from apps.api.app.services.orchestration.summary_generator import generate_summary_text
+from apps.api.app.services.billing.wallet import WalletService, get_wallet_service
 from apps.api.app.services.tools.permissions import get_permitted_tool_names
-from apps.api.app.services.usage.meter import compute_credits_burned, compute_oe_tokens
+from apps.api.app.services.usage.meter import (
+    compute_credits_burned,
+    compute_oe_tokens,
+    get_model_multiplier,
+)
 from apps.api.app.services.usage.recorder import UsageRecord, UsageRecorder, get_usage_recorder
 
 router = APIRouter(tags=["sessions"])
@@ -179,6 +184,7 @@ async def create_turn(
     mode_executor: LangGraphModeExecutor = Depends(get_mode_executor),
     llm_gateway: LlmGateway = Depends(get_llm_gateway),
     usage_recorder: UsageRecorder = Depends(get_usage_recorder),
+    wallet_service: WalletService = Depends(get_wallet_service),
 ) -> TurnRead:
     user_id = current_user["user_id"]
     session, room = await _get_owned_active_session_or_404(db, session_id=session_id, user_id=user_id)
@@ -526,7 +532,10 @@ async def create_turn(
             input_tokens_cached=usage_input_cached,
             output_tokens=usage_output,
         )
-        credits_burned = compute_credits_burned(oe_tokens)
+        credits_burned = compute_credits_burned(
+            oe_tokens,
+            model_multiplier=get_model_multiplier(usage_model_alias),
+        )
         await usage_recorder.stage_llm_usage(
             db,
             UsageRecord(
@@ -544,6 +553,13 @@ async def create_turn(
                 credits_burned=credits_burned,
                 recorded_at=datetime.now(timezone.utc),
             ),
+        )
+        await wallet_service.stage_debit(
+            db,
+            user_id=user_id,
+            credits_burned=credits_burned,
+            reference_id=turn.id,
+            note=f"turn:{turn.id}",
         )
 
     for agent_key, tool_calls in tool_event_entries:
