@@ -18,9 +18,11 @@ _worker_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def _raw_database_url() -> str:
-    database_url = os.getenv("DATABASE_URL")
+    # Worker runtime should use pooled DB connections when available.
+    # Fall back to DATABASE_URL for local/test environments.
+    database_url = os.getenv("DATABASE_POOL_URL") or os.getenv("DATABASE_URL")
     if not database_url:
-        raise RuntimeError("DATABASE_URL must be set for worker DB sessions.")
+        raise RuntimeError("DATABASE_POOL_URL or DATABASE_URL must be set for worker DB sessions.")
     return database_url
 
 
@@ -113,4 +115,3 @@ async def file_parse(ctx: dict[str, Any], file_id: str) -> dict[str, Any]:
             uploaded_file.error_message = str(exc)[:1000]
             await session.commit()
             return {"status": "failed", "file_id": file_id, "error": str(exc)}
-
