@@ -26,3 +26,21 @@ class UsageListRead(BaseModel):
 
     events: list[UsageEventRead]
     total: int
+
+
+class TransactionRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: str
+    amount: str
+    note: str | None
+    reference_id: str | None
+    created_at: datetime
+
+
+class TransactionListRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transactions: list[TransactionRead]
+    total: int

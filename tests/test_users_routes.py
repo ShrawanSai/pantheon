@@ -16,7 +16,7 @@ os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "dummy-service-role-key")
 os.environ.setdefault("API_CORS_ALLOWED_ORIGINS", "http://localhost:3000")
 
-from apps.api.app.db.models import Base, CreditWallet, LlmCallEvent, User
+from apps.api.app.db.models import Base, CreditTransaction, CreditWallet, LlmCallEvent, User
 from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.auth import get_current_user
 from apps.api.app.main import app
@@ -137,6 +137,37 @@ class UsersRoutesTests(unittest.TestCase):
         asyncio.run(insert_row())
         return event_id
 
+    def _seed_transaction(
+        self,
+        *,
+        wallet_id: str,
+        user_id: str,
+        amount: Decimal,
+        kind: str,
+        note: str | None = None,
+        reference_id: str | None = None,
+    ) -> str:
+        tx_id = str(uuid4())
+
+        async def insert_row() -> None:
+            async with self.session_factory() as session:
+                session.add(
+                    CreditTransaction(
+                        id=tx_id,
+                        wallet_id=wallet_id,
+                        user_id=user_id,
+                        amount=amount,
+                        kind=kind,
+                        reference_id=reference_id,
+                        note=note,
+                        created_at=datetime.now(timezone.utc),
+                    )
+                )
+                await session.commit()
+
+        asyncio.run(insert_row())
+        return tx_id
+
     def test_get_wallet_no_existing_wallet(self) -> None:
         user_id = f"user-{uuid4()}"
         email = f"{user_id}@example.com"
@@ -203,6 +234,75 @@ class UsersRoutesTests(unittest.TestCase):
         self.assertEqual(body["events"][0]["id"], own_event_id)
         self.assertEqual(body["events"][0]["model_alias"], "deepseek")
         self.assertEqual(body["events"][0]["credits_burned"], "0.5")
+
+    def test_get_transactions_empty(self) -> None:
+        user_id = f"user-{uuid4()}"
+        email = f"{user_id}@example.com"
+        self._set_auth_user(user_id=user_id, email=email)
+        self._seed_user(user_id=user_id, email=email)
+
+        response = self.client.get("/api/v1/users/me/transactions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"transactions": [], "total": 0})
+
+    def test_get_transactions_returns_own_only(self) -> None:
+        requesting_user_id = f"user-{uuid4()}"
+        requesting_email = f"{requesting_user_id}@example.com"
+        other_user_id = f"user-{uuid4()}"
+        other_email = f"{other_user_id}@example.com"
+        self._set_auth_user(user_id=requesting_user_id, email=requesting_email)
+        self._seed_user(user_id=requesting_user_id, email=requesting_email)
+        self._seed_user(user_id=other_user_id, email=other_email)
+
+        own_wallet_id = self._seed_wallet(user_id=requesting_user_id, balance=Decimal("5.0"))
+        other_wallet_id = self._seed_wallet(user_id=other_user_id, balance=Decimal("5.0"))
+        own_tx_id = self._seed_transaction(
+            wallet_id=own_wallet_id,
+            user_id=requesting_user_id,
+            amount=Decimal("-0.5"),
+            kind="debit",
+            note="own debit",
+            reference_id="turn-own",
+        )
+        self._seed_transaction(
+            wallet_id=other_wallet_id,
+            user_id=other_user_id,
+            amount=Decimal("-1.0"),
+            kind="debit",
+            note="other debit",
+            reference_id="turn-other",
+        )
+
+        response = self.client.get("/api/v1/users/me/transactions")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(len(body["transactions"]), 1)
+        self.assertEqual(body["transactions"][0]["id"], own_tx_id)
+        self.assertEqual(body["transactions"][0]["kind"], "debit")
+
+    def test_get_transactions_pagination(self) -> None:
+        user_id = f"user-{uuid4()}"
+        email = f"{user_id}@example.com"
+        self._set_auth_user(user_id=user_id, email=email)
+        self._seed_user(user_id=user_id, email=email)
+        wallet_id = self._seed_wallet(user_id=user_id, balance=Decimal("100.0"))
+
+        for index in range(5):
+            self._seed_transaction(
+                wallet_id=wallet_id,
+                user_id=user_id,
+                amount=Decimal("-1.0"),
+                kind="debit",
+                note=f"tx-{index}",
+                reference_id=f"turn-{index}",
+            )
+
+        response = self.client.get("/api/v1/users/me/transactions?limit=2&offset=0")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["total"], 5)
+        self.assertEqual(len(body["transactions"]), 2)
 
 
 if __name__ == "__main__":

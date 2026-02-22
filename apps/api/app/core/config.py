@@ -29,6 +29,8 @@ class Settings:
     tavily_api_key: str | None
     file_max_bytes: int
     supabase_storage_bucket: str
+    admin_user_ids: tuple[str, ...]
+    low_balance_threshold: float
 
 
 def _int_env(name: str, default: int) -> int:
@@ -61,6 +63,8 @@ def get_settings() -> Settings:
         raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY must be set.")
     raw_origins = os.getenv("API_CORS_ALLOWED_ORIGINS", "")
     api_cors_allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+    raw_admin_user_ids = os.getenv("ADMIN_USER_IDS", "")
+    admin_user_ids = tuple(user_id.strip() for user_id in raw_admin_user_ids.split(",") if user_id.strip())
 
     return Settings(
         supabase_url=supabase_url,
@@ -81,4 +85,6 @@ def get_settings() -> Settings:
         tavily_api_key=os.getenv("TAVILY_API_KEY"),
         file_max_bytes=_int_env("FILE_MAX_BYTES", 1_048_576),
         supabase_storage_bucket=os.getenv("SUPABASE_STORAGE_BUCKET", "pantheon-files"),
+        admin_user_ids=admin_user_ids,
+        low_balance_threshold=_float_env("LOW_BALANCE_THRESHOLD", 5.0),
     )

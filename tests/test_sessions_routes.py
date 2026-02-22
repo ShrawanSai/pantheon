@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 import json
 import os
 import unittest
@@ -20,6 +21,7 @@ os.environ.setdefault("API_CORS_ALLOWED_ORIGINS", "http://localhost:3000")
 
 from apps.api.app.db.models import (
     Base,
+    CreditWallet,
     LlmCallEvent,
     Message,
     Room,
@@ -309,6 +311,27 @@ class SessionTurnRoutesTests(unittest.TestCase):
 
         asyncio.run(insert_agent())
 
+    def _seed_wallet(self, *, user_id: str, balance: Decimal) -> str:
+        wallet_id = str(uuid4())
+
+        async def insert_wallet() -> None:
+            async with self.session_factory() as session:
+                existing = await session.scalar(select(CreditWallet).where(CreditWallet.user_id == user_id))
+                if existing is None:
+                    session.add(
+                        CreditWallet(
+                            id=wallet_id,
+                            user_id=user_id,
+                            balance=balance,
+                        )
+                    )
+                else:
+                    existing.balance = balance
+                await session.commit()
+
+        asyncio.run(insert_wallet())
+        return wallet_id
+
     def test_create_session_for_owned_room(self) -> None:
         room_id = self._seed_room(
             owner_user_id="primary-user",
@@ -438,6 +461,48 @@ class SessionTurnRoutesTests(unittest.TestCase):
         self.assertEqual(turns_count, 1)
         self.assertEqual(messages_count, 2)
         self.assertEqual(audits_count, 1)
+
+    def test_turn_response_includes_balance_after(self) -> None:
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Turn Balance Room",
+        )
+        self._seed_wallet(user_id="primary-user", balance=Decimal("10.0"))
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek")
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        turn_response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "Check balance signal."},
+        )
+        self.assertEqual(turn_response.status_code, 201)
+        body = turn_response.json()
+        self.assertIsNotNone(body["balance_after"])
+        self.assertFalse(body["low_balance"])
+
+    def test_turn_response_low_balance_flag(self) -> None:
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Turn Low Balance Room",
+        )
+        self._seed_wallet(user_id="primary-user", balance=Decimal("0.01"))
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek")
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        turn_response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "Check low balance signal."},
+        )
+        self.assertEqual(turn_response.status_code, 201)
+        body = turn_response.json()
+        self.assertTrue(body["low_balance"])
+        self.assertIsNotNone(body["balance_after"])
 
     def test_create_second_turn_increments_turn_index_and_message_count(self) -> None:
         self.fake_gateway.calls.clear()
