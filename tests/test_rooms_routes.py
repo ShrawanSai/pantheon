@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 import json
 import os
 import unittest
@@ -17,9 +18,41 @@ os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "dummy-service-role-key")
 os.environ.setdefault("API_CORS_ALLOWED_ORIGINS", "http://localhost:3000")
 
 from apps.api.app.dependencies.auth import get_current_user
-from apps.api.app.db.models import Base, Room, RoomAgent, User
+from apps.api.app.db.models import Base, Room, RoomAgent, UploadedFile, User
 from apps.api.app.db.session import get_db
+from apps.api.app.dependencies.arq import get_arq_redis
 from apps.api.app.main import app
+from apps.api.app.services.storage.supabase_storage import get_storage_service
+
+
+@dataclass
+class FakeStorageService:
+    uploads: list[dict[str, object]] = field(default_factory=list)
+
+    async def upload_bytes(
+        self,
+        *,
+        storage_key: str,
+        content: bytes,
+        content_type: str,
+    ) -> None:
+        self.uploads.append(
+            {
+                "storage_key": storage_key,
+                "content": content,
+                "content_type": content_type,
+                "file_size": len(content),
+            }
+        )
+
+
+@dataclass
+class FakeArqRedis:
+    enqueued: list[tuple[str, tuple[object, ...]]] = field(default_factory=list)
+
+    async def enqueue_job(self, job_name: str, *args: object):
+        self.enqueued.append((job_name, args))
+        return {"job_id": str(uuid4())}
 
 
 class RoomRoutesTests(unittest.TestCase):
@@ -50,8 +83,13 @@ class RoomRoutesTests(unittest.TestCase):
         def override_auth_me() -> dict[str, str]:
             return {"user_id": "user-123", "email": "user@example.com"}
 
+        cls.fake_storage = FakeStorageService()
+        cls.fake_arq_redis = FakeArqRedis()
+
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_current_user] = override_auth_me
+        app.dependency_overrides[get_storage_service] = lambda: cls.fake_storage
+        app.dependency_overrides[get_arq_redis] = lambda: cls.fake_arq_redis
         cls.client = TestClient(app)
 
     def _set_auth_override(self, user_id: str, email: str) -> None:
@@ -62,6 +100,10 @@ class RoomRoutesTests(unittest.TestCase):
 
     def _clear_auth_override(self) -> None:
         app.dependency_overrides.pop(get_current_user, None)
+
+    def setUp(self) -> None:
+        self.fake_storage.uploads.clear()
+        self.fake_arq_redis.enqueued.clear()
 
     def _seed_user_and_room(
         self,
@@ -491,6 +533,92 @@ class RoomRoutesTests(unittest.TestCase):
         response = self.client.delete(f"/api/v1/rooms/{room_id}/agents/nonexistent")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json(), {"detail": "Agent not found."})
+
+    def test_upload_room_file_persists_metadata_and_enqueues_parse_job(self) -> None:
+        room_id = self._seed_user_and_room(
+            owner_user_id="user-123",
+            owner_email="user@example.com",
+            room_name="File Upload Room",
+        )
+        response = self.client.post(
+            f"/api/v1/rooms/{room_id}/files",
+            files={"file": ("notes.txt", b"hello world", "text/plain")},
+        )
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["room_id"], room_id)
+        self.assertEqual(body["filename"], "notes.txt")
+        self.assertEqual(body["parse_status"], "pending")
+        self.assertEqual(body["file_size"], 11)
+        self.assertTrue(body["storage_key"].startswith(f"rooms/{room_id}/"))
+
+        self.assertEqual(len(self.fake_storage.uploads), 1)
+        upload = self.fake_storage.uploads[0]
+        self.assertEqual(upload["content"], b"hello world")
+        self.assertEqual(upload["content_type"], "text/plain")
+        self.assertEqual(upload["file_size"], 11)
+
+        self.assertEqual(len(self.fake_arq_redis.enqueued), 1)
+        job_name, job_args = self.fake_arq_redis.enqueued[0]
+        self.assertEqual(job_name, "file_parse")
+        self.assertEqual(job_args[0], body["id"])
+
+        async def fetch_file_row() -> UploadedFile | None:
+            async with self.session_factory() as session:
+                return await session.get(UploadedFile, body["id"])
+
+        stored = asyncio.run(fetch_file_row())
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.filename, "notes.txt")
+        self.assertEqual(stored.parse_status, "pending")
+
+    def test_upload_room_file_returns_413_when_oversized(self) -> None:
+        room_id = self._seed_user_and_room(
+            owner_user_id="user-123",
+            owner_email="user@example.com",
+            room_name="Oversize File Room",
+        )
+        response = self.client.post(
+            f"/api/v1/rooms/{room_id}/files",
+            files={"file": ("big.txt", b"x" * 1_048_577, "text/plain")},
+        )
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.json(), {"detail": "File exceeds maximum allowed size."})
+        self.assertEqual(self.fake_storage.uploads, [])
+        self.assertEqual(self.fake_arq_redis.enqueued, [])
+
+    def test_upload_room_file_returns_422_for_invalid_format(self) -> None:
+        room_id = self._seed_user_and_room(
+            owner_user_id="user-123",
+            owner_email="user@example.com",
+            room_name="Invalid Format Room",
+        )
+        response = self.client.post(
+            f"/api/v1/rooms/{room_id}/files",
+            files={"file": ("report.pdf", b"%PDF-1.4", "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(),
+            {"detail": "Unsupported file format. Allowed: txt, md, csv."},
+        )
+        self.assertEqual(self.fake_storage.uploads, [])
+        self.assertEqual(self.fake_arq_redis.enqueued, [])
+
+    def test_upload_room_file_returns_404_for_unowned_room(self) -> None:
+        room_id = self._seed_user_and_room(
+            owner_user_id="other-user",
+            owner_email="other@example.com",
+            room_name="Other User File Room",
+        )
+        response = self.client.post(
+            f"/api/v1/rooms/{room_id}/files",
+            files={"file": ("notes.txt", b"hello", "text/plain")},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Room not found."})
+        self.assertEqual(self.fake_storage.uploads, [])
+        self.assertEqual(self.fake_arq_redis.enqueued, [])
 
 
 if __name__ == "__main__":

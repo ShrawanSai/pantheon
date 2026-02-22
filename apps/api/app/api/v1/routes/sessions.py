@@ -366,6 +366,7 @@ async def create_turn(
                     max_output_tokens=settings.context_max_output_tokens,
                     thread_id=f"{session.id}:{next_turn_index + 1}:{selected_agent_name}",
                     allowed_tool_names=allowed_tools,
+                    room_id=session.room_id,
                 ),
             )
             assistant_entries.append((selected_agent_name, gateway_response.text))

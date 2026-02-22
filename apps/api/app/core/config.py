@@ -27,6 +27,8 @@ class Settings:
     orchestrator_manager_model_alias: str
     summarizer_model_alias: str
     tavily_api_key: str | None
+    file_max_bytes: int
+    supabase_storage_bucket: str
 
 
 def _int_env(name: str, default: int) -> int:
@@ -77,4 +79,6 @@ def get_settings() -> Settings:
         orchestrator_manager_model_alias=os.getenv("ORCHESTRATOR_MANAGER_MODEL_ALIAS", "deepseek"),
         summarizer_model_alias=os.getenv("SUMMARIZER_MODEL_ALIAS", "deepseek"),
         tavily_api_key=os.getenv("TAVILY_API_KEY"),
+        file_max_bytes=_int_env("FILE_MAX_BYTES", 1_048_576),
+        supabase_storage_bucket=os.getenv("SUPABASE_STORAGE_BUCKET", "pantheon-files"),
     )
