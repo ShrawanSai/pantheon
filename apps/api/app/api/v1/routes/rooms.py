@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from uuid import uuid4
 
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.app.db.models import Room, RoomAgent, User
 from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.auth import get_current_user
+from apps.api.app.dependencies.rooms import get_owned_active_room_or_404
 from apps.api.app.schemas.rooms import (
     RoomAgentCreateRequest,
     RoomAgentRead,
@@ -53,19 +54,6 @@ def _agent_to_read(agent: RoomAgent) -> RoomAgentRead:
         position=agent.position,
         created_at=agent.created_at,
     )
-
-
-async def _get_owned_active_room_or_404(db: AsyncSession, *, room_id: str, user_id: str) -> Room:
-    room = await db.scalar(
-        select(Room).where(
-            Room.id == room_id,
-            Room.owner_user_id == user_id,
-            Room.deleted_at.is_(None),
-        )
-    )
-    if room is None:
-        raise HTTPException(status_code=404, detail="Room not found.")
-    return room
 
 
 @router.post("", response_model=RoomRead, status_code=status.HTTP_201_CREATED)
@@ -125,7 +113,7 @@ async def get_room(
     db: AsyncSession = Depends(get_db),
 ) -> RoomRead:
     user_id = current_user["user_id"]
-    room = await _get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+    room = await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
     return _room_to_read(room)
 
 
@@ -136,9 +124,9 @@ async def delete_room(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     user_id = current_user["user_id"]
-    room = await _get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+    room = await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
 
-    room.deleted_at = datetime.now()
+    room.deleted_at = datetime.now(timezone.utc)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -151,7 +139,7 @@ async def create_room_agent(
     db: AsyncSession = Depends(get_db),
 ) -> RoomAgentRead:
     user_id = current_user["user_id"]
-    await _get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+    await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
 
     if payload.position is None:
         max_position = await db.scalar(select(func.max(RoomAgent.position)).where(RoomAgent.room_id == room_id))
@@ -188,7 +176,7 @@ async def list_room_agents(
     db: AsyncSession = Depends(get_db),
 ) -> list[RoomAgentRead]:
     user_id = current_user["user_id"]
-    await _get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+    await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
 
     result = await db.scalars(
         select(RoomAgent)
@@ -206,7 +194,7 @@ async def delete_room_agent(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     user_id = current_user["user_id"]
-    await _get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+    await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
 
     agent = await db.scalar(
         select(RoomAgent).where(

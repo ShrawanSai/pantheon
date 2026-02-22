@@ -17,11 +17,16 @@ os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "dummy-service-role-key")
 os.environ.setdefault("API_CORS_ALLOWED_ORIGINS", "http://localhost:3000")
 
-from apps.api.app.db.models import Base, Message, Room, RoomAgent, Session, Turn, TurnContextAudit, User
+from apps.api.app.db.models import Base, LlmCallEvent, Message, Room, RoomAgent, Session, Turn, TurnContextAudit, User
 from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.auth import get_current_user
 from apps.api.app.main import app
 from apps.api.app.services.llm.gateway import GatewayRequest, GatewayResponse, GatewayUsage, get_llm_gateway
+from apps.api.app.services.orchestration.mode_executor import (
+    TurnExecutionInput,
+    TurnExecutionOutput,
+    get_mode_executor,
+)
 from apps.api.app.services.usage.recorder import UsageRecord, get_usage_recorder
 
 
@@ -47,8 +52,52 @@ class FakeGateway:
 class FakeUsageRecorder:
     records: list[UsageRecord] = field(default_factory=list)
 
-    async def record_llm_usage(self, record: UsageRecord) -> None:
+    async def record_llm_usage(self, db: AsyncSession, record: UsageRecord) -> None:
+        _ = db
         self.records.append(record)
+
+
+@dataclass
+class FakeModeExecutor:
+    gateway: FakeGateway
+
+    async def run_turn(self, db: AsyncSession, payload: TurnExecutionInput) -> TurnExecutionOutput:
+        _ = db
+        response = await self.gateway.generate(
+            GatewayRequest(
+                model_alias=payload.model_alias,
+                messages=payload.messages,
+                max_output_tokens=payload.max_output_tokens,
+            )
+        )
+        return TurnExecutionOutput(
+            text=response.text,
+            provider_model=response.provider_model,
+            usage=response.usage,
+        )
+
+
+@dataclass
+class PartialFailModeExecutor:
+    gateway: FakeGateway
+    fail_aliases: set[str] = field(default_factory=set)
+
+    async def run_turn(self, db: AsyncSession, payload: TurnExecutionInput) -> TurnExecutionOutput:
+        _ = db
+        if payload.model_alias in self.fail_aliases:
+            raise RuntimeError(f"forced failure for {payload.model_alias}")
+        response = await self.gateway.generate(
+            GatewayRequest(
+                model_alias=payload.model_alias,
+                messages=payload.messages,
+                max_output_tokens=payload.max_output_tokens,
+            )
+        )
+        return TurnExecutionOutput(
+            text=response.text,
+            provider_model=response.provider_model,
+            usage=response.usage,
+        )
 
 
 class SessionTurnRoutesTests(unittest.TestCase):
@@ -66,6 +115,7 @@ class SessionTurnRoutesTests(unittest.TestCase):
             autoflush=False,
         )
         cls.fake_gateway = FakeGateway()
+        cls.fake_mode_executor = FakeModeExecutor(gateway=cls.fake_gateway)
         cls.fake_usage_recorder = FakeUsageRecorder()
 
         async def init_db() -> None:
@@ -84,6 +134,7 @@ class SessionTurnRoutesTests(unittest.TestCase):
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_current_user] = override_current_user
         app.dependency_overrides[get_llm_gateway] = lambda: cls.fake_gateway
+        app.dependency_overrides[get_mode_executor] = lambda: cls.fake_mode_executor
         app.dependency_overrides[get_usage_recorder] = lambda: cls.fake_usage_recorder
         cls.client = TestClient(app)
 
@@ -104,6 +155,7 @@ class SessionTurnRoutesTests(unittest.TestCase):
         owner_user_id: str,
         owner_email: str,
         room_name: str,
+        current_mode: str = "orchestrator",
         deleted_at: datetime | None = None,
     ) -> str:
         room_id = str(uuid4())
@@ -119,7 +171,7 @@ class SessionTurnRoutesTests(unittest.TestCase):
                         owner_user_id=owner_user_id,
                         name=room_name,
                         goal="Test goal",
-                        current_mode="orchestrator",
+                        current_mode=current_mode,
                         pending_mode=None,
                         deleted_at=deleted_at,
                     )
@@ -129,7 +181,9 @@ class SessionTurnRoutesTests(unittest.TestCase):
         asyncio.run(insert_rows())
         return room_id
 
-    def _seed_agent(self, *, room_id: str, agent_key: str, model_alias: str = "deepseek") -> None:
+    def _seed_agent(
+        self, *, room_id: str, agent_key: str, model_alias: str = "deepseek", position: int = 1
+    ) -> None:
         async def insert_agent() -> None:
             async with self.session_factory() as session:
                 session.add(
@@ -141,7 +195,7 @@ class SessionTurnRoutesTests(unittest.TestCase):
                         model_alias=model_alias,
                         role_prompt="Be helpful.",
                         tool_permissions_json="[]",
-                        position=1,
+                        position=position,
                     )
                 )
                 await session.commit()
@@ -335,6 +389,251 @@ class SessionTurnRoutesTests(unittest.TestCase):
         detail = response.json()["detail"]
         self.assertEqual(detail["code"], "context_budget_exceeded")
         self.assertEqual(len(self.fake_gateway.calls), 0)
+
+    def test_create_turn_persists_llm_call_event_with_pricing_version(self) -> None:
+        self.fake_gateway.calls.clear()
+
+        # Use real UsageRecorder for this test to validate llm_call_events persistence.
+        app.dependency_overrides.pop(get_usage_recorder, None)
+        try:
+            room_id = self._seed_room(
+                owner_user_id="primary-user",
+                owner_email="primary-user@example.com",
+                room_name="Ledger Room",
+            )
+            self._seed_agent(room_id=room_id, agent_key="ledger_agent", model_alias="deepseek")
+            session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+            self.assertEqual(session_response.status_code, 201)
+            session_id = session_response.json()["id"]
+
+            turn_response = self.client.post(
+                f"/api/v1/sessions/{session_id}/turns",
+                json={"message": "Persist usage event."},
+            )
+            self.assertEqual(turn_response.status_code, 201)
+
+            async def fetch_event() -> LlmCallEvent | None:
+                async with self.session_factory() as session:
+                    return await session.scalar(
+                        select(LlmCallEvent)
+                        .where(LlmCallEvent.session_id == session_id)
+                        .order_by(LlmCallEvent.created_at.desc())
+                    )
+
+            event = asyncio.run(fetch_event())
+            self.assertIsNotNone(event)
+            assert event is not None
+            self.assertEqual(event.model_alias, "deepseek")
+            self.assertEqual(event.provider, "openrouter")
+            self.assertEqual(event.pricing_version, "2026-02-20")
+            self.assertEqual(event.room_id, room_id)
+            self.assertEqual(event.status, "success")
+        finally:
+            app.dependency_overrides[get_usage_recorder] = lambda: self.fake_usage_recorder
+
+    def test_manual_mode_dispatches_only_tagged_agent(self) -> None:
+        self.fake_gateway.calls.clear()
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Manual Tagged Room",
+            current_mode="manual",
+        )
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek")
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen")
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        turn_response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "Please draft this @writer"},
+        )
+        self.assertEqual(turn_response.status_code, 201)
+        self.assertEqual(turn_response.json()["model_alias_used"], "qwen")
+        self.assertEqual(len(self.fake_gateway.calls), 1)
+        self.assertEqual(self.fake_gateway.calls[0].model_alias, "qwen")
+
+    def test_manual_mode_rejects_untagged_message(self) -> None:
+        self.fake_gateway.calls.clear()
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Manual Untagged Room",
+            current_mode="manual",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen")
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "Please draft this"},
+        )
+        self.assertEqual(response.status_code, 422)
+        detail = response.json()["detail"]
+        self.assertEqual(detail["code"], "no_valid_tagged_agents")
+        self.assertEqual(len(self.fake_gateway.calls), 0)
+
+    def test_manual_mode_rejects_unknown_tag(self) -> None:
+        self.fake_gateway.calls.clear()
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Manual Unknown Tag Room",
+            current_mode="manual",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen")
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "Please draft this @ghost"},
+        )
+        self.assertEqual(response.status_code, 422)
+        detail = response.json()["detail"]
+        self.assertEqual(detail["code"], "no_valid_tagged_agents")
+        self.assertEqual(len(self.fake_gateway.calls), 0)
+
+    def test_manual_mode_with_multiple_tags_uses_first_valid_match_only(self) -> None:
+        self.fake_gateway.calls.clear()
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Manual Multi Tag Room",
+            current_mode="manual",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen")
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek")
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "Please collaborate @writer then @researcher"},
+        )
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["model_alias_used"], "qwen")
+        self.assertEqual(len(self.fake_gateway.calls), 1)
+        self.assertEqual(self.fake_gateway.calls[0].model_alias, "qwen")
+
+    def test_roundtable_mode_dispatches_agents_in_position_order(self) -> None:
+        self.fake_gateway.calls.clear()
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Roundtable Ordered Room",
+            current_mode="roundtable",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen", position=1)
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek", position=2)
+        self._seed_agent(room_id=room_id, agent_key="reviewer", model_alias="gpt_oss", position=3)
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        turn_response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "Discuss this proposal."},
+        )
+        self.assertEqual(turn_response.status_code, 201)
+        self.assertEqual([call.model_alias for call in self.fake_gateway.calls], ["qwen", "deepseek", "gpt_oss"])
+
+    def test_roundtable_mode_full_success_writes_all_assistant_messages(self) -> None:
+        self.fake_gateway.calls.clear()
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Roundtable Full Success Room",
+            current_mode="roundtable",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen", position=1)
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek", position=2)
+        self._seed_agent(room_id=room_id, agent_key="reviewer", model_alias="gpt_oss", position=3)
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        turn_response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "Debate pros and cons."},
+        )
+        self.assertEqual(turn_response.status_code, 201)
+        body = turn_response.json()
+        self.assertEqual(body["status"], "completed")
+        self.assertEqual(body["mode"], "roundtable")
+        self.assertTrue(body["assistant_output"].startswith("Writer: "))
+        self.assertIn("Researcher:", body["assistant_output"])
+        self.assertIn("Reviewer:", body["assistant_output"])
+        self.assertEqual([call.model_alias for call in self.fake_gateway.calls], ["qwen", "deepseek", "gpt_oss"])
+
+        async def fetch_roundtable_message_rows() -> list[tuple[str, str]]:
+            async with self.session_factory() as session:
+                rows = await session.execute(
+                    select(Message.agent_name, Message.content)
+                    .where(
+                        Message.session_id == session_id,
+                        Message.role == "assistant",
+                        Message.mode == "roundtable",
+                    )
+                    .order_by(Message.created_at.asc(), Message.id.asc())
+                )
+                return [(name, content) for name, content in rows.all()]
+
+        assistant_rows = asyncio.run(fetch_roundtable_message_rows())
+        self.assertEqual(len(assistant_rows), 3)
+        self.assertEqual({row[0] for row in assistant_rows}, {"Writer", "Researcher", "Reviewer"})
+
+    def test_roundtable_mode_partial_failure_continues_remaining_agents(self) -> None:
+        self.fake_gateway.calls.clear()
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Roundtable Partial Room",
+            current_mode="roundtable",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen", position=1)
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek", position=2)
+        self._seed_agent(room_id=room_id, agent_key="reviewer", model_alias="gpt_oss", position=3)
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        failing_executor = PartialFailModeExecutor(gateway=self.fake_gateway, fail_aliases={"deepseek"})
+        app.dependency_overrides[get_mode_executor] = lambda: failing_executor
+        try:
+            turn_response = self.client.post(
+                f"/api/v1/sessions/{session_id}/turns",
+                json={"message": "Roundtable with one failing agent."},
+            )
+            self.assertEqual(turn_response.status_code, 201)
+            body = turn_response.json()
+            self.assertEqual(body["status"], "partial")
+            self.assertEqual([call.model_alias for call in self.fake_gateway.calls], ["qwen", "gpt_oss"])
+
+            async def fetch_assistant_contents() -> list[str]:
+                async with self.session_factory() as session:
+                    rows = await session.scalars(
+                        select(Message.content)
+                        .where(
+                            Message.session_id == session_id,
+                            Message.role == "assistant",
+                            Message.mode == "roundtable",
+                        )
+                        .order_by(Message.created_at.asc(), Message.id.asc())
+                    )
+                    return list(rows.all())
+
+            contents = asyncio.run(fetch_assistant_contents())
+            self.assertEqual(len(contents), 3)
+            self.assertTrue(any("[[agent_error]]" in content for content in contents))
+        finally:
+            app.dependency_overrides[get_mode_executor] = lambda: self.fake_mode_executor
 
 
 if __name__ == "__main__":

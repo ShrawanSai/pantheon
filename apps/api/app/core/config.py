@@ -23,6 +23,7 @@ class Settings:
     context_mandatory_summary_turn: int
     context_default_model_limit: int
     context_recent_turns_to_keep: int
+    pricing_version: str
 
 
 def _int_env(name: str, default: int) -> int:
@@ -69,4 +70,5 @@ def get_settings() -> Settings:
         context_mandatory_summary_turn=_int_env("CONTEXT_MANDATORY_SUMMARY_TURN", 8),
         context_default_model_limit=_int_env("CONTEXT_DEFAULT_MODEL_LIMIT", 8192),
         context_recent_turns_to_keep=_int_env("CONTEXT_RECENT_TURNS_TO_KEEP", 4),
+        pricing_version=os.getenv("PRICING_VERSION", "2026-02-20"),
     )
