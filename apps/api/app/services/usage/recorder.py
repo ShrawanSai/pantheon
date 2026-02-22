@@ -36,7 +36,7 @@ class UsageRecord:
 
 
 class UsageRecorder:
-    async def record_llm_usage(self, db: AsyncSession, record: UsageRecord) -> None:
+    async def stage_llm_usage(self, db: AsyncSession, record: UsageRecord) -> None:
         settings = get_settings()
         event = LlmCallEvent(
             id=str(uuid4()),
@@ -64,6 +64,9 @@ class UsageRecorder:
             created_at=record.recorded_at,
         )
         db.add(event)
+
+    async def record_llm_usage(self, db: AsyncSession, record: UsageRecord) -> None:
+        await self.stage_llm_usage(db, record)
         await db.commit()
 
 

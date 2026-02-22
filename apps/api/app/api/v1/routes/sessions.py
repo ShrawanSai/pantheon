@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 import re
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.app.core.config import get_settings
 from apps.api.app.db.models import (
+    ToolCallEvent,
     Message,
     Room,
     RoomAgent,
@@ -24,7 +26,7 @@ from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.auth import get_current_user
 from apps.api.app.dependencies.rooms import get_owned_active_room_or_404
 from apps.api.app.schemas.chat import SessionRead, TurnCreateRequest, TurnRead
-from apps.api.app.services.llm.gateway import GatewayMessage
+from apps.api.app.services.llm.gateway import GatewayMessage, LlmGateway, get_llm_gateway
 from apps.api.app.services.orchestration.context_manager import (
     ContextBudgetExceeded,
     ContextManager,
@@ -33,9 +35,14 @@ from apps.api.app.services.orchestration.context_manager import (
 )
 from apps.api.app.services.orchestration.mode_executor import (
     LangGraphModeExecutor,
+    ToolCallRecord,
     TurnExecutionInput,
     get_mode_executor,
 )
+from apps.api.app.services.orchestration.orchestrator_manager import route_turn
+from apps.api.app.services.orchestration.summary_extractor import extract_summary_structure
+from apps.api.app.services.orchestration.summary_generator import generate_summary_text
+from apps.api.app.services.tools.permissions import get_permitted_tool_names
 from apps.api.app.services.usage.meter import compute_credits_burned, compute_oe_tokens
 from apps.api.app.services.usage.recorder import UsageRecord, UsageRecorder, get_usage_recorder
 
@@ -170,6 +177,7 @@ async def create_turn(
     current_user: dict[str, str] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     mode_executor: LangGraphModeExecutor = Depends(get_mode_executor),
+    llm_gateway: LlmGateway = Depends(get_llm_gateway),
     usage_recorder: UsageRecorder = Depends(get_usage_recorder),
 ) -> TurnRead:
     user_id = current_user["user_id"]
@@ -183,6 +191,9 @@ async def create_turn(
         )
     ).all()
     active_agent = agents[0] if agents else None
+    manual_tag_selected_agents: list[RoomAgent] = []
+    orchestrator_selected_agents: list[RoomAgent] = []
+    settings = get_settings()
 
     if room.current_mode in {"manual", "tag"}:
         tagged_keys = _extract_tagged_agent_keys(payload.message)
@@ -195,8 +206,8 @@ async def create_turn(
                 },
             )
         by_key = {agent.agent_key.lower(): agent for agent in agents}
-        active_agent = next((by_key[key] for key in tagged_keys if key in by_key), None)
-        if active_agent is None:
+        manual_tag_selected_agents = [by_key[key] for key in tagged_keys if key in by_key]
+        if not manual_tag_selected_agents:
             raise HTTPException(
                 status_code=422,
                 detail={
@@ -204,6 +215,29 @@ async def create_turn(
                     "message": "No tagged agents matched this room.",
                 },
             )
+        active_agent = manual_tag_selected_agents[0]
+    elif room.current_mode == "orchestrator":
+        if not agents:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "no_room_agents",
+                    "message": "Orchestrator mode requires at least one agent.",
+                },
+            )
+        decision = await route_turn(
+            agents=agents,
+            user_input=payload.message,
+            gateway=llm_gateway,
+            manager_model_alias=settings.orchestrator_manager_model_alias,
+        )
+        by_key = {agent.agent_key.lower(): agent for agent in agents}
+        orchestrator_selected_agents = [
+            by_key[key.lower()] for key in decision.selected_agent_keys if key.lower() in by_key
+        ]
+        if not orchestrator_selected_agents:
+            orchestrator_selected_agents = [agents[0]]
+        active_agent = orchestrator_selected_agents[0]
     if room.current_mode == "roundtable" and not agents:
         raise HTTPException(
             status_code=422,
@@ -245,7 +279,6 @@ async def create_turn(
             or 0
         )
 
-    settings = get_settings()
     context_manager = _build_context_manager()
     if room.current_mode == "roundtable":
         system_messages = [
@@ -292,10 +325,19 @@ async def create_turn(
 
     next_turn_index = int(await db.scalar(select(func.max(Turn.turn_index)).where(Turn.session_id == session.id)) or 0)
 
-    selected_agents = agents if room.current_mode == "roundtable" else [active_agent]
+    if room.current_mode == "roundtable":
+        selected_agents = agents
+    elif room.current_mode == "orchestrator":
+        selected_agents = orchestrator_selected_agents or ([active_agent] if active_agent else [])
+    elif room.current_mode in {"manual", "tag"}:
+        selected_agents = manual_tag_selected_agents or ([active_agent] if active_agent else [])
+    else:
+        selected_agents = [active_agent]
+    share_same_turn_outputs = room.current_mode in {"roundtable", "orchestrator"}
     prior_roundtable_outputs: list[GatewayMessage] = []
     assistant_entries: list[tuple[str, str]] = []
     usage_entries: list[tuple[str, str, int, int, int, int]] = []
+    tool_event_entries: list[tuple[str | None, tuple[ToolCallRecord, ...]]] = []
     turn_status = "completed"
 
     for selected_agent in selected_agents:
@@ -313,6 +355,7 @@ async def create_turn(
             *[GatewayMessage(role=item.role, content=item.content) for item in context.messages],
             *prior_roundtable_outputs,
         ]
+        allowed_tools = tuple(get_permitted_tool_names(selected_agent)) if selected_agent is not None else ()
 
         try:
             gateway_response = await mode_executor.run_turn(
@@ -322,6 +365,7 @@ async def create_turn(
                     messages=request_messages,
                     max_output_tokens=settings.context_max_output_tokens,
                     thread_id=f"{session.id}:{next_turn_index + 1}:{selected_agent_name}",
+                    allowed_tool_names=allowed_tools,
                 ),
             )
             assistant_entries.append((selected_agent_name, gateway_response.text))
@@ -335,7 +379,13 @@ async def create_turn(
                     gateway_response.usage.total_tokens,
                 )
             )
-            if room.current_mode == "roundtable":
+            tool_event_entries.append(
+                (
+                    selected_agent.agent_key if selected_agent is not None else None,
+                    gateway_response.tool_calls,
+                )
+            )
+            if share_same_turn_outputs:
                 prior_roundtable_outputs.append(
                     GatewayMessage(
                         role="assistant",
@@ -349,14 +399,20 @@ async def create_turn(
                 f"type={exc.__class__.__name__} message={str(exc) or 'execution_failed'}"
             )
             assistant_entries.append((selected_agent_name, error_content))
-            if room.current_mode == "roundtable":
+            if share_same_turn_outputs:
                 prior_roundtable_outputs.append(
                     GatewayMessage(role="assistant", content=f"{selected_agent_name}: {error_content}")
                 )
 
+    multi_agent_mode = len(selected_agents) > 1
+    model_alias_marker = (
+        "roundtable"
+        if room.current_mode == "roundtable"
+        else ("multi-agent" if room.current_mode == "orchestrator" and multi_agent_mode else model_alias)
+    )
     assistant_output_text = (
         "\n\n".join([f"{name}: {content}" for name, content in assistant_entries])
-        if room.current_mode == "roundtable"
+        if multi_agent_mode
         else (assistant_entries[0][1] if assistant_entries else "")
     )
 
@@ -398,7 +454,7 @@ async def create_turn(
         content=assistant_output_text,
     )
     db.add(user_message)
-    if room.current_mode == "roundtable":
+    if multi_agent_mode:
         for entry_agent_name, entry_content in assistant_entries:
             db.add(
                 Message(
@@ -415,16 +471,26 @@ async def create_turn(
         db.add(assistant_message)
 
     if context.generated_summary_text:
+        generated = await generate_summary_text(
+            raw_summary_text=context.generated_summary_text,
+            gateway=llm_gateway,
+            model_alias=settings.summarizer_model_alias,
+        )
+        structure = await extract_summary_structure(
+            summary_text=generated.summary_text,
+            gateway=llm_gateway,
+            model_alias=settings.summarizer_model_alias,
+        )
         summary = SessionSummary(
             id=str(uuid4()),
             session_id=session.id,
             from_message_id=context.summary_from_message_id,
             to_message_id=context.summary_to_message_id,
-            summary_text=context.generated_summary_text,
-            key_facts_json=json.dumps([]),
-            open_questions_json=json.dumps([]),
-            decisions_json=json.dumps([]),
-            action_items_json=json.dumps([]),
+            summary_text=generated.summary_text,
+            key_facts_json=json.dumps(structure.key_facts),
+            open_questions_json=json.dumps(structure.open_questions),
+            decisions_json=json.dumps(structure.decisions),
+            action_items_json=json.dumps(structure.action_items),
         )
         db.add(summary)
 
@@ -432,7 +498,7 @@ async def create_turn(
         id=str(uuid4()),
         turn_id=turn.id,
         session_id=session.id,
-        model_alias=model_alias if room.current_mode != "roundtable" else "roundtable",
+        model_alias=model_alias_marker,
         model_context_limit=context.model_context_limit,
         input_budget=context.input_budget,
         estimated_input_tokens_before=context.estimated_input_tokens_before,
@@ -445,15 +511,6 @@ async def create_turn(
         overhead_reserve=context.overhead_reserve,
     )
     db.add(audit)
-    try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Turn creation conflicted with concurrent writes. Please retry.",
-        ) from exc
-    await db.refresh(turn)
 
     for (
         usage_model_alias,
@@ -469,7 +526,7 @@ async def create_turn(
             output_tokens=usage_output,
         )
         credits_burned = compute_credits_burned(oe_tokens)
-        await usage_recorder.record_llm_usage(
+        await usage_recorder.stage_llm_usage(
             db,
             UsageRecord(
                 user_id=user_id,
@@ -485,8 +542,38 @@ async def create_turn(
                 oe_tokens_computed=oe_tokens,
                 credits_burned=credits_burned,
                 recorded_at=datetime.now(timezone.utc),
-            )
+            ),
         )
+
+    for agent_key, tool_calls in tool_event_entries:
+        for tool_call in tool_calls:
+            db.add(
+                ToolCallEvent(
+                    id=str(uuid4()),
+                    user_id=user_id,
+                    room_id=session.room_id,
+                    session_id=session.id,
+                    turn_id=turn.id,
+                    agent_key=agent_key,
+                    tool_name=tool_call.tool_name,
+                    tool_input_json=tool_call.input_json,
+                    tool_output_json=tool_call.output_json,
+                    status=tool_call.status,
+                    latency_ms=tool_call.latency_ms,
+                    credits_charged=Decimal("0"),
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Turn creation conflicted with concurrent writes. Please retry.",
+        ) from exc
+    await db.refresh(turn)
 
     return TurnRead(
         id=turn.id,
@@ -496,7 +583,7 @@ async def create_turn(
         user_input=turn.user_input,
         assistant_output=turn.assistant_output or "",
         status=turn.status,
-        model_alias_used=model_alias if room.current_mode != "roundtable" else "roundtable",
+        model_alias_used=model_alias_marker,
         summary_triggered=context.summary_triggered,
         prune_triggered=context.prune_triggered,
         overflow_rejected=False,

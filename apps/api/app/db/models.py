@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, text
@@ -226,3 +227,23 @@ class LlmCallEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
+
+
+class ToolCallEvent(Base):
+    __tablename__ = "tool_call_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    room_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    session_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    turn_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("turns.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    agent_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tool_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    tool_input_json: Mapped[str] = mapped_column(Text(), nullable=False)
+    tool_output_json: Mapped[str] = mapped_column(Text(), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'success'"))
+    latency_ms: Mapped[int | None] = mapped_column(Integer(), nullable=True)
+    credits_charged: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False, default=Decimal("0"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

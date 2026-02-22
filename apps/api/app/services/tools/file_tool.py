@@ -1,1 +1,3 @@
-﻿"""Week 1 scaffold placeholder."""
+from __future__ import annotations
+
+TOOL_NAME = "file_read"

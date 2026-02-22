@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 import sys
 import types
@@ -14,6 +15,7 @@ from apps.api.app.services.orchestration.mode_executor import (
     LangGraphModeExecutor,
     TurnExecutionInput,
 )
+from apps.api.app.services.tools.search_tool import SearchResult
 
 
 @dataclass
@@ -32,6 +34,22 @@ class FakeGateway:
                 total_tokens=18,
             ),
         )
+
+
+@dataclass
+class FakeSearchTool:
+    calls: list[str] = field(default_factory=list)
+
+    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        _ = max_results
+        self.calls.append(query)
+        return [
+            SearchResult(
+                title="Result A",
+                url="https://example.com/a",
+                snippet="Snippet A",
+            )
+        ]
 
 
 class LangGraphModeExecutorTests(unittest.TestCase):
@@ -58,6 +76,68 @@ class LangGraphModeExecutorTests(unittest.TestCase):
         self.assertEqual(output.provider_model, "fake/graph-model")
         self.assertEqual(output.usage.total_tokens, 18)
         self.assertEqual(len(gateway.calls), 1)
+
+    def test_run_turn_uses_search_tool_when_permitted_and_query_present(self) -> None:
+        gateway = FakeGateway()
+        search_tool = FakeSearchTool()
+        executor = LangGraphModeExecutor(llm_gateway=gateway, search_tool=search_tool)
+
+        async def run():
+            return await executor.run_turn(
+                db=None,  # type: ignore[arg-type]
+                payload=TurnExecutionInput(
+                    model_alias="deepseek",
+                    messages=[
+                        GatewayMessage(role="system", content="s"),
+                        GatewayMessage(role="user", content="search: latest ai news"),
+                    ],
+                    max_output_tokens=256,
+                    thread_id="thread-search-1",
+                    allowed_tool_names=("search",),
+                ),
+            )
+
+        output = asyncio.run(run())
+        self.assertEqual(output.text, "graph-response")
+        self.assertEqual(search_tool.calls, ["latest ai news"])
+        self.assertEqual(len(gateway.calls), 1)
+        injected_messages = gateway.calls[0]
+        self.assertTrue(any("Tool(search) results" in message.content for message in injected_messages))
+        self.assertEqual(len(output.tool_calls), 1)
+        tool_call = output.tool_calls[0]
+        self.assertEqual(tool_call.tool_name, "search")
+        self.assertEqual(tool_call.status, "success")
+        self.assertIsNotNone(tool_call.latency_ms)
+        json.loads(tool_call.input_json)
+        json.loads(tool_call.output_json)
+
+    def test_run_turn_does_not_use_search_tool_when_not_permitted(self) -> None:
+        gateway = FakeGateway()
+        search_tool = FakeSearchTool()
+        executor = LangGraphModeExecutor(llm_gateway=gateway, search_tool=search_tool)
+
+        async def run():
+            return await executor.run_turn(
+                db=None,  # type: ignore[arg-type]
+                payload=TurnExecutionInput(
+                    model_alias="deepseek",
+                    messages=[
+                        GatewayMessage(role="system", content="s"),
+                        GatewayMessage(role="user", content="search: latest ai news"),
+                    ],
+                    max_output_tokens=256,
+                    thread_id="thread-search-2",
+                    allowed_tool_names=(),
+                ),
+            )
+
+        output = asyncio.run(run())
+        self.assertEqual(output.text, "graph-response")
+        self.assertEqual(search_tool.calls, [])
+        self.assertEqual(len(gateway.calls), 1)
+        injected_messages = gateway.calls[0]
+        self.assertFalse(any("Tool(search) results" in message.content for message in injected_messages))
+        self.assertEqual(output.tool_calls, ())
 
     def test_build_checkpointer_logs_warning_and_uses_memory_fallback(self) -> None:
         with patch.object(mode_executor, "_LOGGER") as logger:
