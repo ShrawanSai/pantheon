@@ -147,7 +147,10 @@ class LangGraphModeExecutorTests(unittest.TestCase):
         logger.warning.assert_called()
 
     def test_build_checkpointer_runs_setup_once_when_postgres_saver_available(self) -> None:
-        class FakePostgresSaver:
+        class FakeBaseCheckpointSaver:
+            pass
+
+        class FakePostgresSaver(FakeBaseCheckpointSaver):
             def __init__(self) -> None:
                 self.setup_calls = 0
 
@@ -161,8 +164,16 @@ class LangGraphModeExecutorTests(unittest.TestCase):
 
         postgres_module = types.ModuleType("langgraph.checkpoint.postgres")
         postgres_module.PostgresSaver = FakePostgresSaver
+        base_module = types.ModuleType("langgraph.checkpoint.base")
+        base_module.BaseCheckpointSaver = FakeBaseCheckpointSaver
 
-        with patch.dict(sys.modules, {"langgraph.checkpoint.postgres": postgres_module}):
+        with patch.dict(
+            sys.modules,
+            {
+                "langgraph.checkpoint.postgres": postgres_module,
+                "langgraph.checkpoint.base": base_module,
+            },
+        ):
             with patch("apps.api.app.db.session._raw_database_pool_url", return_value="postgresql://example/db"):
                 mode_executor._POSTGRES_CHECKPOINTER_SETUP_DONE = False
                 first = mode_executor._build_checkpointer()
@@ -171,6 +182,44 @@ class LangGraphModeExecutorTests(unittest.TestCase):
         self.assertIsInstance(second, FakePostgresSaver)
         self.assertEqual(first.setup_calls, 1)
         self.assertEqual(second.setup_calls, 0)
+
+    def test_build_checkpointer_falls_back_when_postgres_factory_returns_context_manager(self) -> None:
+        class FakeContextManager:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                _ = (exc_type, exc, tb)
+                return False
+
+        class FakePostgresSaver:
+            @classmethod
+            def from_conn_string(cls, conn_str: str):
+                _ = conn_str
+                return FakeContextManager()
+
+        class FakeBaseCheckpointSaver:
+            pass
+
+        postgres_module = types.ModuleType("langgraph.checkpoint.postgres")
+        postgres_module.PostgresSaver = FakePostgresSaver
+        base_module = types.ModuleType("langgraph.checkpoint.base")
+        base_module.BaseCheckpointSaver = FakeBaseCheckpointSaver
+
+        with patch.dict(
+            sys.modules,
+            {
+                "langgraph.checkpoint.postgres": postgres_module,
+                "langgraph.checkpoint.base": base_module,
+            },
+        ):
+            with patch("apps.api.app.db.session._raw_database_pool_url", return_value="postgresql://example/db"):
+                with patch.object(mode_executor, "_LOGGER") as logger:
+                    mode_executor._POSTGRES_CHECKPOINTER_SETUP_DONE = False
+                    checkpointer = mode_executor._build_checkpointer()
+
+        self.assertIsInstance(checkpointer, MemorySaver)
+        logger.warning.assert_called()
 
 
 if __name__ == "__main__":
