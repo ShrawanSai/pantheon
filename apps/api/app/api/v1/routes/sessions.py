@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.app.core.config import get_settings
@@ -20,18 +22,25 @@ from apps.api.app.db.models import (
 )
 from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.auth import get_current_user
+from apps.api.app.dependencies.rooms import get_owned_active_room_or_404
 from apps.api.app.schemas.chat import SessionRead, TurnCreateRequest, TurnRead
-from apps.api.app.services.llm.gateway import GatewayMessage, GatewayRequest, LlmGateway, get_llm_gateway
+from apps.api.app.services.llm.gateway import GatewayMessage
 from apps.api.app.services.orchestration.context_manager import (
     ContextBudgetExceeded,
     ContextManager,
     ContextMessage,
     HistoryMessage,
 )
+from apps.api.app.services.orchestration.mode_executor import (
+    LangGraphModeExecutor,
+    TurnExecutionInput,
+    get_mode_executor,
+)
 from apps.api.app.services.usage.meter import compute_credits_burned, compute_oe_tokens
 from apps.api.app.services.usage.recorder import UsageRecord, UsageRecorder, get_usage_recorder
 
 router = APIRouter(tags=["sessions"])
+_TAG_PATTERN = re.compile(r"@([a-zA-Z0-9_]+)")
 
 
 def _session_to_read(session: Session) -> SessionRead:
@@ -44,17 +53,16 @@ def _session_to_read(session: Session) -> SessionRead:
     )
 
 
-async def _get_owned_active_room_or_404(db: AsyncSession, *, room_id: str, user_id: str) -> Room:
-    room = await db.scalar(
-        select(Room).where(
-            Room.id == room_id,
-            Room.owner_user_id == user_id,
-            Room.deleted_at.is_(None),
-        )
-    )
-    if room is None:
-        raise HTTPException(status_code=404, detail="Room not found.")
-    return room
+def _extract_tagged_agent_keys(message: str) -> list[str]:
+    tags = _TAG_PATTERN.findall(message)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for tag in tags:
+        normalized = tag.strip().lower()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            ordered.append(normalized)
+    return ordered
 
 
 async def _get_owned_active_session_or_404(
@@ -96,7 +104,7 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
 ) -> SessionRead:
     user_id = current_user["user_id"]
-    await _get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+    await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
 
     session = Session(
         id=str(uuid4()),
@@ -117,7 +125,7 @@ async def list_sessions(
     db: AsyncSession = Depends(get_db),
 ) -> list[SessionRead]:
     user_id = current_user["user_id"]
-    await _get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+    await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
 
     result = await db.scalars(
         select(Session)
@@ -138,7 +146,7 @@ async def delete_session(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     user_id = current_user["user_id"]
-    await _get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+    await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
 
     session = await db.scalar(
         select(Session).where(
@@ -150,7 +158,7 @@ async def delete_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
 
-    session.deleted_at = datetime.now()
+    session.deleted_at = datetime.now(timezone.utc)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -161,17 +169,50 @@ async def create_turn(
     payload: TurnCreateRequest,
     current_user: dict[str, str] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    llm_gateway: LlmGateway = Depends(get_llm_gateway),
+    mode_executor: LangGraphModeExecutor = Depends(get_mode_executor),
     usage_recorder: UsageRecorder = Depends(get_usage_recorder),
 ) -> TurnRead:
     user_id = current_user["user_id"]
     session, room = await _get_owned_active_session_or_404(db, session_id=session_id, user_id=user_id)
 
-    active_agent = await db.scalar(
-        select(RoomAgent)
-        .where(RoomAgent.room_id == room.id)
-        .order_by(RoomAgent.position.asc(), RoomAgent.created_at.asc())
-    )
+    agents = (
+        await db.scalars(
+            select(RoomAgent)
+            .where(RoomAgent.room_id == room.id)
+            .order_by(RoomAgent.position.asc(), RoomAgent.created_at.asc())
+        )
+    ).all()
+    active_agent = agents[0] if agents else None
+
+    if room.current_mode in {"manual", "tag"}:
+        tagged_keys = _extract_tagged_agent_keys(payload.message)
+        if not tagged_keys:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "no_valid_tagged_agents",
+                    "message": "Manual mode requires at least one tagged agent (e.g., @writer).",
+                },
+            )
+        by_key = {agent.agent_key.lower(): agent for agent in agents}
+        active_agent = next((by_key[key] for key in tagged_keys if key in by_key), None)
+        if active_agent is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "no_valid_tagged_agents",
+                    "message": "No tagged agents matched this room.",
+                },
+            )
+    if room.current_mode == "roundtable" and not agents:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "no_room_agents",
+                "message": "Round table mode requires at least one agent in the room.",
+            },
+        )
+
     model_alias = payload.model_alias_override or (active_agent.model_alias if active_agent else "deepseek")
     agent_name = active_agent.name if active_agent else "Assistant"
     agent_role_prompt = active_agent.role_prompt if active_agent else "Provide helpful responses."
@@ -206,11 +247,17 @@ async def create_turn(
 
     settings = get_settings()
     context_manager = _build_context_manager()
-    system_messages = [
-        ContextMessage(role="system", content=f"Room mode: {room.current_mode}"),
-        ContextMessage(role="system", content=f"Room goal: {room.goal or 'No goal specified.'}"),
-        ContextMessage(role="system", content=f"Agent role: {agent_role_prompt}"),
-    ]
+    if room.current_mode == "roundtable":
+        system_messages = [
+            ContextMessage(role="system", content=f"Room mode: {room.current_mode}"),
+            ContextMessage(role="system", content=f"Room goal: {room.goal or 'No goal specified.'}"),
+        ]
+    else:
+        system_messages = [
+            ContextMessage(role="system", content=f"Room mode: {room.current_mode}"),
+            ContextMessage(role="system", content=f"Room goal: {room.goal or 'No goal specified.'}"),
+            ContextMessage(role="system", content=f"Agent role: {agent_role_prompt}"),
+        ]
     history_messages = [
         HistoryMessage(
             id=message.id,
@@ -243,25 +290,94 @@ async def create_turn(
             },
         ) from exc
 
-    gateway_request = GatewayRequest(
-        model_alias=model_alias,
-        messages=[GatewayMessage(role=item.role, content=item.content) for item in context.messages],
-        max_output_tokens=settings.context_max_output_tokens,
-    )
-    gateway_response = await llm_gateway.generate(gateway_request)
-
     next_turn_index = int(await db.scalar(select(func.max(Turn.turn_index)).where(Turn.session_id == session.id)) or 0)
+
+    selected_agents = agents if room.current_mode == "roundtable" else [active_agent]
+    prior_roundtable_outputs: list[GatewayMessage] = []
+    assistant_entries: list[tuple[str, str]] = []
+    usage_entries: list[tuple[str, str, int, int, int, int]] = []
+    turn_status = "completed"
+
+    for selected_agent in selected_agents:
+        if selected_agent is None:
+            selected_agent_name = "Assistant"
+            selected_agent_alias = model_alias
+            selected_agent_role = "Provide helpful responses."
+        else:
+            selected_agent_name = selected_agent.name
+            selected_agent_alias = payload.model_alias_override or selected_agent.model_alias
+            selected_agent_role = selected_agent.role_prompt
+
+        request_messages: list[GatewayMessage] = [
+            GatewayMessage(role="system", content=f"Agent role: {selected_agent_role}"),
+            *[GatewayMessage(role=item.role, content=item.content) for item in context.messages],
+            *prior_roundtable_outputs,
+        ]
+
+        try:
+            gateway_response = await mode_executor.run_turn(
+                db,
+                TurnExecutionInput(
+                    model_alias=selected_agent_alias,
+                    messages=request_messages,
+                    max_output_tokens=settings.context_max_output_tokens,
+                    thread_id=f"{session.id}:{next_turn_index + 1}:{selected_agent_name}",
+                ),
+            )
+            assistant_entries.append((selected_agent_name, gateway_response.text))
+            usage_entries.append(
+                (
+                    selected_agent_alias,
+                    gateway_response.provider_model,
+                    gateway_response.usage.input_tokens_fresh,
+                    gateway_response.usage.input_tokens_cached,
+                    gateway_response.usage.output_tokens,
+                    gateway_response.usage.total_tokens,
+                )
+            )
+            if room.current_mode == "roundtable":
+                prior_roundtable_outputs.append(
+                    GatewayMessage(
+                        role="assistant",
+                        content=f"{selected_agent_name}: {gateway_response.text}",
+                    )
+                )
+        except Exception as exc:
+            turn_status = "partial"
+            error_content = (
+                f"[[agent_error]] agent={selected_agent_name} "
+                f"type={exc.__class__.__name__} message={str(exc) or 'execution_failed'}"
+            )
+            assistant_entries.append((selected_agent_name, error_content))
+            if room.current_mode == "roundtable":
+                prior_roundtable_outputs.append(
+                    GatewayMessage(role="assistant", content=f"{selected_agent_name}: {error_content}")
+                )
+
+    assistant_output_text = (
+        "\n\n".join([f"{name}: {content}" for name, content in assistant_entries])
+        if room.current_mode == "roundtable"
+        else (assistant_entries[0][1] if assistant_entries else "")
+    )
+
     turn = Turn(
         id=str(uuid4()),
         session_id=session.id,
         turn_index=next_turn_index + 1,
         mode=room.current_mode,
         user_input=payload.message,
-        assistant_output=gateway_response.text,
-        status="completed",
+        assistant_output=assistant_output_text,
+        status=turn_status,
     )
     db.add(turn)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Turn creation conflicted with concurrent writes. Please retry.",
+        ) from exc
 
     user_message = Message(
         id=str(uuid4()),
@@ -279,10 +395,24 @@ async def create_turn(
         role="assistant",
         agent_name=agent_name,
         mode=room.current_mode,
-        content=gateway_response.text,
+        content=assistant_output_text,
     )
     db.add(user_message)
-    db.add(assistant_message)
+    if room.current_mode == "roundtable":
+        for entry_agent_name, entry_content in assistant_entries:
+            db.add(
+                Message(
+                    id=str(uuid4()),
+                    turn_id=turn.id,
+                    session_id=session.id,
+                    role="assistant",
+                    agent_name=entry_agent_name,
+                    mode=room.current_mode,
+                    content=entry_content,
+                )
+            )
+    else:
+        db.add(assistant_message)
 
     if context.generated_summary_text:
         summary = SessionSummary(
@@ -302,7 +432,7 @@ async def create_turn(
         id=str(uuid4()),
         turn_id=turn.id,
         session_id=session.id,
-        model_alias=model_alias,
+        model_alias=model_alias if room.current_mode != "roundtable" else "roundtable",
         model_context_limit=context.model_context_limit,
         input_budget=context.input_budget,
         estimated_input_tokens_before=context.estimated_input_tokens_before,
@@ -315,31 +445,48 @@ async def create_turn(
         overhead_reserve=context.overhead_reserve,
     )
     db.add(audit)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Turn creation conflicted with concurrent writes. Please retry.",
+        ) from exc
     await db.refresh(turn)
 
-    oe_tokens = compute_oe_tokens(
-        input_tokens_fresh=gateway_response.usage.input_tokens_fresh,
-        input_tokens_cached=gateway_response.usage.input_tokens_cached,
-        output_tokens=gateway_response.usage.output_tokens,
-    )
-    credits_burned = compute_credits_burned(oe_tokens)
-    await usage_recorder.record_llm_usage(
-        UsageRecord(
-            user_id=user_id,
-            session_id=session.id,
-            turn_id=turn.id,
-            model_alias=model_alias,
-            provider_model=gateway_response.provider_model,
-            input_tokens_fresh=gateway_response.usage.input_tokens_fresh,
-            input_tokens_cached=gateway_response.usage.input_tokens_cached,
-            output_tokens=gateway_response.usage.output_tokens,
-            total_tokens=gateway_response.usage.total_tokens,
-            oe_tokens_computed=oe_tokens,
-            credits_burned=credits_burned,
-            recorded_at=datetime.now(),
+    for (
+        usage_model_alias,
+        usage_provider_model,
+        usage_input_fresh,
+        usage_input_cached,
+        usage_output,
+        usage_total,
+    ) in usage_entries:
+        oe_tokens = compute_oe_tokens(
+            input_tokens_fresh=usage_input_fresh,
+            input_tokens_cached=usage_input_cached,
+            output_tokens=usage_output,
         )
-    )
+        credits_burned = compute_credits_burned(oe_tokens)
+        await usage_recorder.record_llm_usage(
+            db,
+            UsageRecord(
+                user_id=user_id,
+                room_id=session.room_id,
+                session_id=session.id,
+                turn_id=turn.id,
+                model_alias=usage_model_alias,
+                provider_model=usage_provider_model,
+                input_tokens_fresh=usage_input_fresh,
+                input_tokens_cached=usage_input_cached,
+                output_tokens=usage_output,
+                total_tokens=usage_total,
+                oe_tokens_computed=oe_tokens,
+                credits_burned=credits_burned,
+                recorded_at=datetime.now(timezone.utc),
+            )
+        )
 
     return TurnRead(
         id=turn.id,
@@ -349,10 +496,9 @@ async def create_turn(
         user_input=turn.user_input,
         assistant_output=turn.assistant_output or "",
         status=turn.status,
-        model_alias_used=model_alias,
+        model_alias_used=model_alias if room.current_mode != "roundtable" else "roundtable",
         summary_triggered=context.summary_triggered,
         prune_triggered=context.prune_triggered,
         overflow_rejected=False,
         created_at=turn.created_at,
     )
-

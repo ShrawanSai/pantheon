@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -228,7 +228,7 @@ class RoomRoutesTests(unittest.TestCase):
             owner_user_id="user-123",
             owner_email="user@example.com",
             room_name="Owned Deleted",
-            deleted_at=datetime.now(),
+            deleted_at=datetime.now(timezone.utc),
         )
         self._seed_user_and_room(
             owner_user_id="other-user",
@@ -271,7 +271,7 @@ class RoomRoutesTests(unittest.TestCase):
             owner_user_id="user-123",
             owner_email="user@example.com",
             room_name="Owned Deleted Target",
-            deleted_at=datetime.now(),
+            deleted_at=datetime.now(timezone.utc),
         )
         response = self.client.get(f"/api/v1/rooms/{room_id}")
         self.assertEqual(response.status_code, 404)
@@ -316,7 +316,7 @@ class RoomRoutesTests(unittest.TestCase):
             owner_user_id="user-123",
             owner_email="user@example.com",
             room_name="Already Deleted",
-            deleted_at=datetime.now(),
+            deleted_at=datetime.now(timezone.utc),
         )
         response = self.client.delete(f"/api/v1/rooms/{room_id}")
         self.assertEqual(response.status_code, 404)

@@ -5,6 +5,7 @@ SQLAlchemy
 langchain
 langchain-openai
 langgraph
+langgraph-checkpoint-postgres
 python-dotenv
 supabase
 arq
