@@ -2,20 +2,32 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass, field
 import sys
 import types
 import unittest
+from uuid import uuid4
 from unittest.mock import patch
 
 from langgraph.checkpoint.memory import MemorySaver
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
+
+from apps.api.app.db.models import Base, Room, UploadedFile, User
 from apps.api.app.services.llm.gateway import GatewayMessage, GatewayResponse, GatewayUsage
 from apps.api.app.services.orchestration import mode_executor
 from apps.api.app.services.orchestration.mode_executor import (
     LangGraphModeExecutor,
     TurnExecutionInput,
 )
+from apps.api.app.services.tools.file_tool import DefaultFileReadTool
 from apps.api.app.services.tools.search_tool import SearchResult
+
+# Keep import-time settings self-contained for CI/local test runs.
+os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
+os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "dummy-service-role-key")
+os.environ.setdefault("API_CORS_ALLOWED_ORIGINS", "http://localhost:3000")
 
 
 @dataclass
@@ -220,6 +232,159 @@ class LangGraphModeExecutorTests(unittest.TestCase):
 
         self.assertIsInstance(checkpointer, MemorySaver)
         logger.warning.assert_called()
+
+
+class FileReadNodeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.engine = create_async_engine(
+            "sqlite+aiosqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        cls.session_factory = async_sessionmaker(
+            bind=cls.engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+        )
+
+        async def init_db() -> None:
+            async with cls.engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+
+        asyncio.run(init_db())
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        async def shutdown_db() -> None:
+            async with cls.engine.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+            await cls.engine.dispose()
+
+        asyncio.run(shutdown_db())
+
+    def _seed_uploaded_file(self, *, parse_status: str, parsed_text: str | None = None) -> tuple[str, str]:
+        file_id = str(uuid4())
+        room_id = str(uuid4())
+        user_id = str(uuid4())
+
+        async def insert_rows() -> None:
+            async with self.session_factory() as session:
+                session.add(User(id=user_id, email=f"{user_id}@example.com"))
+                session.add(
+                    Room(
+                        id=room_id,
+                        owner_user_id=user_id,
+                        name="File Read Room",
+                        goal=None,
+                        current_mode="orchestrator",
+                        pending_mode=None,
+                    )
+                )
+                session.add(
+                    UploadedFile(
+                        id=file_id,
+                        user_id=user_id,
+                        room_id=room_id,
+                        filename="notes.txt",
+                        storage_key=f"rooms/{room_id}/{file_id}/notes.txt",
+                        content_type="text/plain",
+                        file_size=15,
+                        parse_status=parse_status,
+                        parsed_text=parsed_text,
+                        error_message="parse failed" if parse_status == "failed" else None,
+                    )
+                )
+                await session.commit()
+
+        asyncio.run(insert_rows())
+        return file_id, room_id
+
+    def test_file_read_permitted_and_completed(self) -> None:
+        gateway = FakeGateway()
+        executor = LangGraphModeExecutor(
+            llm_gateway=gateway,
+            search_tool=FakeSearchTool(),
+            file_read_tool=DefaultFileReadTool(),
+        )
+        file_id, room_id = self._seed_uploaded_file(parse_status="completed", parsed_text="test content")
+
+        async def run() -> None:
+            async with self.session_factory() as session:
+                return await executor.run_turn(
+                    db=session,
+                    payload=TurnExecutionInput(
+                        model_alias="deepseek",
+                        messages=[GatewayMessage(role="user", content=f"file: {file_id}")],
+                        max_output_tokens=256,
+                        thread_id="file-thread-1",
+                        allowed_tool_names=("file_read",),
+                        room_id=room_id,
+                    ),
+                )
+
+        output = asyncio.run(run())
+        self.assertEqual(len(output.tool_calls), 1)
+        self.assertEqual(output.tool_calls[0].tool_name, "file_read")
+        self.assertEqual(output.tool_calls[0].status, "success")
+        self.assertEqual(len(gateway.calls), 1)
+        self.assertTrue(any("Tool(file_read) content" in message.content for message in gateway.calls[0]))
+
+    def test_file_read_permitted_and_pending(self) -> None:
+        gateway = FakeGateway()
+        executor = LangGraphModeExecutor(
+            llm_gateway=gateway,
+            search_tool=FakeSearchTool(),
+            file_read_tool=DefaultFileReadTool(),
+        )
+        file_id, room_id = self._seed_uploaded_file(parse_status="pending")
+
+        async def run() -> None:
+            async with self.session_factory() as session:
+                return await executor.run_turn(
+                    db=session,
+                    payload=TurnExecutionInput(
+                        model_alias="deepseek",
+                        messages=[GatewayMessage(role="user", content=f"file: {file_id}")],
+                        max_output_tokens=256,
+                        thread_id="file-thread-2",
+                        allowed_tool_names=("file_read",),
+                        room_id=room_id,
+                    ),
+                )
+
+        output = asyncio.run(run())
+        self.assertEqual(len(output.tool_calls), 1)
+        self.assertEqual(output.tool_calls[0].status, "error")
+        self.assertEqual(len(gateway.calls), 1)
+        self.assertFalse(any("Tool(file_read) content" in message.content for message in gateway.calls[0]))
+
+    def test_file_read_not_permitted_node_absent(self) -> None:
+        gateway = FakeGateway()
+        executor = LangGraphModeExecutor(
+            llm_gateway=gateway,
+            search_tool=FakeSearchTool(),
+            file_read_tool=DefaultFileReadTool(),
+        )
+
+        async def run() -> None:
+            return await executor.run_turn(
+                db=None,  # type: ignore[arg-type]
+                payload=TurnExecutionInput(
+                    model_alias="deepseek",
+                    messages=[GatewayMessage(role="user", content=f"file: {uuid4()}")],
+                    max_output_tokens=256,
+                    thread_id="file-thread-3",
+                    allowed_tool_names=(),
+                    room_id="room-ignored",
+                ),
+            )
+
+        output = asyncio.run(run())
+        self.assertEqual(output.tool_calls, ())
+        self.assertEqual(len(gateway.calls), 1)
+        self.assertFalse(any("Tool(file_read) content" in message.content for message in gateway.calls[0]))
 
 
 if __name__ == "__main__":

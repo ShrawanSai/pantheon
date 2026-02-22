@@ -12,3 +12,4 @@ arq
 psycopg[binary]
 aiosqlite
 httpx
+python-multipart

@@ -20,6 +20,11 @@ from apps.api.app.services.llm.gateway import (
     LlmGateway,
     get_llm_gateway,
 )
+from apps.api.app.services.tools.file_tool import (
+    FileReadTool,
+    TOOL_NAME as FILE_READ_TOOL_NAME,
+    get_file_read_tool,
+)
 from apps.api.app.services.tools.search_tool import SearchTool, TOOL_NAME as SEARCH_TOOL_NAME, get_search_tool
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,6 +42,8 @@ class TurnExecutionState(TypedDict, total=False):
     usage_output_tokens: int
     usage_total_tokens: int
     tool_query: str | None
+    room_id: str
+    file_id_trigger: str | None
     tool_events: list[dict[str, object]]
 
 
@@ -47,6 +54,7 @@ class TurnExecutionInput:
     max_output_tokens: int
     thread_id: str
     allowed_tool_names: tuple[str, ...] = ()
+    room_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -67,9 +75,15 @@ class ToolCallRecord:
 
 
 class LangGraphModeExecutor:
-    def __init__(self, llm_gateway: LlmGateway, search_tool: SearchTool | None = None) -> None:
+    def __init__(
+        self,
+        llm_gateway: LlmGateway,
+        search_tool: SearchTool | None = None,
+        file_read_tool: FileReadTool | None = None,
+    ) -> None:
         self._llm_gateway = llm_gateway
         self._search_tool = search_tool or get_search_tool()
+        self._file_read_tool = file_read_tool or get_file_read_tool()
         self._graphs: dict[tuple[str, ...], object] = {}
 
     def _extract_search_query(self, messages: list[GatewayMessage]) -> str | None:
@@ -86,7 +100,18 @@ class LangGraphModeExecutor:
             return query or None
         return None
 
-    def _compile_graph(self, allowed_tools: set[str]):
+    def _extract_file_id(self, messages: list[GatewayMessage]) -> str | None:
+        user_messages = [message.content for message in messages if message.role == "user" and message.content.strip()]
+        if not user_messages:
+            return None
+        latest = user_messages[-1].strip()
+        lowered = latest.lower()
+        if lowered.startswith("file:"):
+            file_id = latest.split(":", 1)[1].strip()
+            return file_id or None
+        return None
+
+    def _compile_graph(self, allowed_tools: set[str], db: AsyncSession | None = None):
         async def call_model(state: TurnExecutionState) -> TurnExecutionState:
             response = await self._llm_gateway.generate(
                 GatewayRequest(
@@ -147,12 +172,79 @@ class LangGraphModeExecutor:
                 existing_events = state.get("tool_events") or []
                 return {"tool_events": [*existing_events, tool_event]}
 
+        async def maybe_file_read(state: TurnExecutionState) -> TurnExecutionState:
+            file_id = state.get("file_id_trigger")
+            if not file_id:
+                return {}
+            room_id = state.get("room_id") or ""
+            started = time.monotonic()
+            try:
+                if db is None:
+                    raise RuntimeError("DB session unavailable for file_read tool.")
+                result = await self._file_read_tool.read(file_id=file_id, room_id=room_id, db=db)
+            except Exception as exc:
+                latency_ms = int((time.monotonic() - started) * 1000)
+                tool_event = {
+                    "tool_name": FILE_READ_TOOL_NAME,
+                    "input_json": json.dumps({"file_id": file_id}),
+                    "output_json": json.dumps({"error": str(exc)}),
+                    "status": "error",
+                    "latency_ms": latency_ms,
+                }
+                existing_events = state.get("tool_events") or []
+                return {"tool_events": [*existing_events, tool_event]}
+
+            latency_ms = int((time.monotonic() - started) * 1000)
+            if result.status == "completed":
+                enriched_messages = [
+                    *state["messages"],
+                    GatewayMessage(
+                        role="system",
+                        content=f"Tool({FILE_READ_TOOL_NAME}) content for file '{file_id}':\n{result.content or ''}",
+                    ),
+                ]
+                tool_event = {
+                    "tool_name": FILE_READ_TOOL_NAME,
+                    "input_json": json.dumps({"file_id": file_id}),
+                    "output_json": json.dumps({"chars": len(result.content or "")}),
+                    "status": "success",
+                    "latency_ms": latency_ms,
+                }
+                existing_events = state.get("tool_events") or []
+                return {"messages": enriched_messages, "tool_events": [*existing_events, tool_event]}
+
+            tool_event = {
+                "tool_name": FILE_READ_TOOL_NAME,
+                "input_json": json.dumps({"file_id": file_id}),
+                "output_json": json.dumps({"error": result.error, "result_status": result.status}),
+                "status": "error",
+                "latency_ms": latency_ms,
+            }
+            existing_events = state.get("tool_events") or []
+            return {"tool_events": [*existing_events, tool_event]}
+
         graph = StateGraph(TurnExecutionState)
-        if SEARCH_TOOL_NAME in allowed_tools:
+        has_search = SEARCH_TOOL_NAME in allowed_tools
+        has_file_read = FILE_READ_TOOL_NAME in allowed_tools
+        if has_search and has_file_read:
+            graph.add_node("maybe_search", maybe_search)
+            graph.add_node("maybe_file_read", maybe_file_read)
+            graph.add_node("call_model", call_model)
+            graph.set_entry_point("maybe_search")
+            graph.add_edge("maybe_search", "maybe_file_read")
+            graph.add_edge("maybe_file_read", "call_model")
+            graph.add_edge("call_model", END)
+        elif has_search:
             graph.add_node("maybe_search", maybe_search)
             graph.add_node("call_model", call_model)
             graph.set_entry_point("maybe_search")
             graph.add_edge("maybe_search", "call_model")
+            graph.add_edge("call_model", END)
+        elif has_file_read:
+            graph.add_node("maybe_file_read", maybe_file_read)
+            graph.add_node("call_model", call_model)
+            graph.set_entry_point("maybe_file_read")
+            graph.add_edge("maybe_file_read", "call_model")
             graph.add_edge("call_model", END)
         else:
             graph.add_node("call_model", call_model)
@@ -160,24 +252,27 @@ class LangGraphModeExecutor:
             graph.add_edge("call_model", END)
         return graph.compile(checkpointer=_build_checkpointer())
 
-    def _get_compiled_graph(self, allowed_tools: set[str]):
+    def _get_compiled_graph(self, allowed_tools: set[str], db: AsyncSession | None = None):
+        if FILE_READ_TOOL_NAME in allowed_tools:
+            return self._compile_graph(allowed_tools, db=db)
         key = tuple(sorted(allowed_tools))
         graph = self._graphs.get(key)
         if graph is None:
-            graph = self._compile_graph(allowed_tools)
+            graph = self._compile_graph(allowed_tools, db=None)
             self._graphs[key] = graph
         return graph
 
     async def run_turn(self, db: AsyncSession, payload: TurnExecutionInput) -> TurnExecutionOutput:
-        _ = db  # Reserved for future graph nodes that persist checkpoint metadata.
         allowed_tools = {name.strip().lower() for name in payload.allowed_tool_names if name and name.strip()}
-        graph = self._get_compiled_graph(allowed_tools)
+        graph = self._get_compiled_graph(allowed_tools, db=db)
         result = await graph.ainvoke(
             {
                 "model_alias": payload.model_alias,
                 "messages": payload.messages,
                 "max_output_tokens": payload.max_output_tokens,
                 "tool_query": self._extract_search_query(payload.messages),
+                "room_id": payload.room_id,
+                "file_id_trigger": self._extract_file_id(payload.messages),
             },
             config={"configurable": {"thread_id": payload.thread_id}},
         )
@@ -256,7 +351,11 @@ def _setup_checkpointer_once(checkpointer: object) -> None:
 
 @lru_cache(maxsize=1)
 def _get_cached_mode_executor() -> LangGraphModeExecutor:
-    return LangGraphModeExecutor(llm_gateway=get_llm_gateway(), search_tool=get_search_tool())
+    return LangGraphModeExecutor(
+        llm_gateway=get_llm_gateway(),
+        search_tool=get_search_tool(),
+        file_read_tool=get_file_read_tool(),
+    )
 
 
 def get_mode_executor() -> LangGraphModeExecutor:

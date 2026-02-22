@@ -3,7 +3,18 @@ from __future__ import annotations
 from decimal import Decimal
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -233,6 +244,8 @@ class ToolCallEvent(Base):
     __tablename__ = "tool_call_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    # Intentionally no FK to users.id: telemetry rows should remain for audit/history
+    # even if user records are soft-deleted or hard-deleted in future maintenance paths.
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     room_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     session_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
@@ -247,3 +260,31 @@ class ToolCallEvent(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     credits_charged: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False, default=Decimal("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class UploadedFile(Base):
+    __tablename__ = "uploaded_files"
+    __table_args__ = (
+        CheckConstraint(
+            "parse_status IN ('pending', 'completed', 'failed')",
+            name="ck_uploaded_files_parse_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    room_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer(), nullable=False)
+    parse_status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'pending'"))
+    parsed_text: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
