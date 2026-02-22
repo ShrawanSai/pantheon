@@ -59,5 +59,6 @@ class TurnRead(BaseModel):
     summary_triggered: bool
     prune_triggered: bool
     overflow_rejected: bool
+    balance_after: str | None = None
+    low_balance: bool = False
     created_at: datetime
-

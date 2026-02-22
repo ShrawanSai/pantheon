@@ -44,6 +44,7 @@ from apps.api.app.services.orchestration.summary_extractor import extract_summar
 from apps.api.app.services.orchestration.summary_generator import generate_summary_text
 from apps.api.app.services.billing.wallet import WalletService, get_wallet_service
 from apps.api.app.services.tools.permissions import get_permitted_tool_names
+from apps.api.app.utils.decimal_format import format_decimal
 from apps.api.app.services.usage.meter import (
     compute_credits_burned,
     compute_oe_tokens,
@@ -345,6 +346,7 @@ async def create_turn(
     usage_entries: list[tuple[str, str, int, int, int, int]] = []
     tool_event_entries: list[tuple[str | None, tuple[ToolCallRecord, ...]]] = []
     turn_status = "completed"
+    last_debit_balance: Decimal | None = None
 
     for selected_agent in selected_agents:
         if selected_agent is None:
@@ -554,13 +556,14 @@ async def create_turn(
                 recorded_at=datetime.now(timezone.utc),
             ),
         )
-        await wallet_service.stage_debit(
+        debit_result = await wallet_service.stage_debit(
             db,
             user_id=user_id,
             credits_burned=credits_burned,
             reference_id=turn.id,
             note=f"turn:{turn.id}",
         )
+        last_debit_balance = debit_result.new_balance
 
     for agent_key, tool_calls in tool_event_entries:
         for tool_call in tool_calls:
@@ -592,6 +595,13 @@ async def create_turn(
         ) from exc
     await db.refresh(turn)
 
+    if last_debit_balance is None:
+        balance_after = None
+        low_balance = False
+    else:
+        balance_after = format_decimal(last_debit_balance)
+        low_balance = last_debit_balance < Decimal(str(settings.low_balance_threshold))
+
     return TurnRead(
         id=turn.id,
         session_id=turn.session_id,
@@ -604,5 +614,7 @@ async def create_turn(
         summary_triggered=context.summary_triggered,
         prune_triggered=context.prune_triggered,
         overflow_rejected=False,
+        balance_after=balance_after,
+        low_balance=low_balance,
         created_at=turn.created_at,
     )
