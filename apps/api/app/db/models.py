@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -13,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -235,6 +237,73 @@ class LlmCallEvent(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     pricing_version: Mapped[str] = mapped_column(String(32), nullable=False)
     request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class PricingVersion(Base):
+    __tablename__ = "pricing_versions"
+
+    version: Mapped[str] = mapped_column(String(32), primary_key=True)
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    effective_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean(), nullable=False, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class ModelPricing(Base):
+    __tablename__ = "model_pricing"
+    __table_args__ = (UniqueConstraint("pricing_version", "model_alias"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    pricing_version: Mapped[str] = mapped_column(
+        String(32), ForeignKey("pricing_versions.version", ondelete="CASCADE"), nullable=False
+    )
+    model_alias: Mapped[str] = mapped_column(String(128), nullable=False)
+    multiplier: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class CreditWallet(Base):
+    __tablename__ = "credit_wallets"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    balance: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=func.now(),
+    )
+
+
+class CreditTransaction(Base):
+    __tablename__ = "credit_transactions"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('grant', 'debit', 'refund')",
+            name="ck_credit_transactions_kind",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    wallet_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("credit_wallets.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    reference_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )

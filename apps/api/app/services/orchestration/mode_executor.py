@@ -87,28 +87,23 @@ class LangGraphModeExecutor:
         self._graphs: dict[tuple[str, ...], object] = {}
 
     def _extract_search_query(self, messages: list[GatewayMessage]) -> str | None:
-        user_messages = [message.content for message in messages if message.role == "user" and message.content.strip()]
-        if not user_messages:
-            return None
-        latest = user_messages[-1].strip()
-        lowered = latest.lower()
-        if lowered.startswith("search:"):
-            query = latest.split(":", 1)[1].strip()
-            return query or None
-        if lowered.startswith("search for "):
-            query = latest[len("search for ") :].strip()
-            return query or None
+        user_messages = [message.content.strip() for message in messages if message.role == "user" and message.content.strip()]
+        for latest in reversed(user_messages):
+            lowered = latest.lower()
+            if lowered.startswith("search:"):
+                query = latest.split(":", 1)[1].strip()
+                return query or None
+            if lowered.startswith("search for "):
+                query = latest[len("search for ") :].strip()
+                return query or None
         return None
 
     def _extract_file_id(self, messages: list[GatewayMessage]) -> str | None:
-        user_messages = [message.content for message in messages if message.role == "user" and message.content.strip()]
-        if not user_messages:
-            return None
-        latest = user_messages[-1].strip()
-        lowered = latest.lower()
-        if lowered.startswith("file:"):
-            file_id = latest.split(":", 1)[1].strip()
-            return file_id or None
+        user_messages = [message.content.strip() for message in messages if message.role == "user" and message.content.strip()]
+        for latest in reversed(user_messages):
+            if latest.lower().startswith("file:"):
+                file_id = latest.split(":", 1)[1].strip()
+                return file_id or None
         return None
 
     def _compile_graph(self, allowed_tools: set[str], db: AsyncSession | None = None):

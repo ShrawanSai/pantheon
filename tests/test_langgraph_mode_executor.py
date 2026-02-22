@@ -386,6 +386,42 @@ class FileReadNodeTests(unittest.TestCase):
         self.assertEqual(len(gateway.calls), 1)
         self.assertFalse(any("Tool(file_read) content" in message.content for message in gateway.calls[0]))
 
+    def test_search_and_file_read_combined_topology_emits_both_tool_events(self) -> None:
+        gateway = FakeGateway()
+        search_tool = FakeSearchTool()
+        executor = LangGraphModeExecutor(
+            llm_gateway=gateway,
+            search_tool=search_tool,
+            file_read_tool=DefaultFileReadTool(),
+        )
+        file_id, room_id = self._seed_uploaded_file(parse_status="completed", parsed_text="combined content")
+
+        async def run() -> None:
+            async with self.session_factory() as session:
+                return await executor.run_turn(
+                    db=session,
+                    payload=TurnExecutionInput(
+                        model_alias="deepseek",
+                        messages=[
+                            GatewayMessage(role="user", content="search: latest ai news"),
+                            GatewayMessage(role="user", content=f"file: {file_id}"),
+                        ],
+                        max_output_tokens=256,
+                        thread_id="file-search-thread-1",
+                        allowed_tool_names=("search", "file_read"),
+                        room_id=room_id,
+                    ),
+                )
+
+        output = asyncio.run(run())
+        self.assertEqual(search_tool.calls, ["latest ai news"])
+        self.assertEqual([call.tool_name for call in output.tool_calls], ["search", "file_read"])
+        self.assertEqual([call.status for call in output.tool_calls], ["success", "success"])
+        self.assertTrue(all(call.latency_ms is not None for call in output.tool_calls))
+        self.assertEqual(len(gateway.calls), 1)
+        self.assertTrue(any("Tool(search) results" in message.content for message in gateway.calls[0]))
+        self.assertTrue(any("Tool(file_read) content" in message.content for message in gateway.calls[0]))
+
 
 if __name__ == "__main__":
     unittest.main()
