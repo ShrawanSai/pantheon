@@ -244,3 +244,4 @@ async def chat_stream(session_id: str, req: ChatRequest) -> StreamingResponse:
             yield (json.dumps({"type": "error", "error": str(exc)}) + "\n").encode("utf-8")
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+
