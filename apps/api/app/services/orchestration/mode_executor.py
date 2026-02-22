@@ -210,9 +210,16 @@ def _build_checkpointer():
     # Postgres checkpointer wiring is enabled when langgraph-postgres package is available.
     try:
         from langgraph.checkpoint.postgres import PostgresSaver  # type: ignore
+        from langgraph.checkpoint.base import BaseCheckpointSaver  # type: ignore
         from apps.api.app.db.session import _raw_database_pool_url  # local helper import
 
         checkpointer = PostgresSaver.from_conn_string(_raw_database_pool_url())
+        if not isinstance(checkpointer, BaseCheckpointSaver):
+            _LOGGER.warning(
+                "Postgres checkpointer factory returned unsupported object type (%s); using MemorySaver.",
+                type(checkpointer).__name__,
+            )
+            return MemorySaver()
         _setup_checkpointer_once(checkpointer)
         _LOGGER.info("Using Postgres checkpointer for LangGraph turn execution.")
         return checkpointer
