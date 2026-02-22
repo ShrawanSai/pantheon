@@ -24,6 +24,9 @@ class Settings:
     context_default_model_limit: int
     context_recent_turns_to_keep: int
     pricing_version: str
+    orchestrator_manager_model_alias: str
+    summarizer_model_alias: str
+    tavily_api_key: str | None
 
 
 def _int_env(name: str, default: int) -> int:
@@ -71,4 +74,7 @@ def get_settings() -> Settings:
         context_default_model_limit=_int_env("CONTEXT_DEFAULT_MODEL_LIMIT", 8192),
         context_recent_turns_to_keep=_int_env("CONTEXT_RECENT_TURNS_TO_KEEP", 4),
         pricing_version=os.getenv("PRICING_VERSION", "2026-02-20"),
+        orchestrator_manager_model_alias=os.getenv("ORCHESTRATOR_MANAGER_MODEL_ALIAS", "deepseek"),
+        summarizer_model_alias=os.getenv("SUMMARIZER_MODEL_ALIAS", "deepseek"),
+        tavily_api_key=os.getenv("TAVILY_API_KEY"),
     )

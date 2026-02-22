@@ -11,3 +11,4 @@ supabase
 arq
 psycopg[binary]
 aiosqlite
+httpx
