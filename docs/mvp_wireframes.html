@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pantheon MVP Interactive Wireframes</title>
+  <style>
+    :root {
+      --bg: #eef2f6;
+      --panel: #ffffff;
+      --ink: #17212b;
+      --muted: #5e6b78;
+      --line: #d7dfe7;
+      --brand: #0f6bff;
+      --brand-soft: #eaf2ff;
+      --success: #0a8f66;
+      --warn: #af5d00;
+      --danger: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #e7eef7 0, var(--bg) 220px);
+    }
+    .shell {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 18px 16px 30px;
+    }
+    .topbar {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .title {
+      font-weight: 700;
+      font-size: 16px;
+    }
+    .top-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 6px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .btn.primary {
+      border-color: #b7d1ff;
+      background: var(--brand-soft);
+      color: #0a4bb9;
+    }
+    .btn.success {
+      border-color: #bde6d8;
+      background: #ecf9f4;
+      color: var(--success);
+    }
+    .prototype {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+      overflow: hidden;
+      min-height: 740px;
+      box-shadow: 0 12px 30px rgba(19, 36, 56, 0.08);
+    }
+    .proto-head {
+      border-bottom: 1px solid var(--line);
+      background: #f9fbfe;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .crumbs {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      background: #fff;
+    }
+    .status {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .view {
+      display: none;
+      padding: 14px;
+      min-height: 680px;
+    }
+    .view.active { display: block; }
+    .grid {
+      display: grid;
+      gap: 12px;
+    }
+    .grid.cols-3 { grid-template-columns: 280px 1fr 280px; }
+    .grid.cols-2 { grid-template-columns: 1fr 1fr; }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      overflow: hidden;
+    }
+    .panel h3 {
+      margin: 0;
+      padding: 10px 12px;
+      font-size: 13px;
+      border-bottom: 1px solid var(--line);
+      background: #f9fbfd;
+    }
+    .panel .body {
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      background: #fff;
+    }
+    .item strong { font-size: 12px; }
+    .muted { color: var(--muted); font-size: 11px; }
+    .tag {
+      font-size: 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 6px;
+      background: #fbfdff;
+      color: var(--muted);
+      margin-right: 4px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 12px;
+      background: #fff;
+    }
+    .composer {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .timeline .item { border-left: 3px solid #d3e4ff; }
+    .timeline .final { border-left-color: #b9edd9; }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .kpi {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      background: #fff;
+      font-size: 11px;
+    }
+    .kpi strong { display: block; font-size: 16px; margin-top: 3px; }
+    .hint {
+      margin-top: 12px;
+      border: 1px solid #ffe3be;
+      background: #fff8ef;
+      color: var(--warn);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+    .footer-flow {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .flow-steps {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .flow-steps button {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .flow-steps button.active {
+      border-color: #b7d1ff;
+      background: #eaf2ff;
+      color: #0a4bb9;
+      font-weight: 700;
+    }
+    @media (max-width: 1020px) {
+      .grid.cols-3 { grid-template-columns: 1fr; }
+      .kpis { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <div class="title">Pantheon MVP Interactive Wireframes</div>
+      <div class="top-actions">
+        <button class="btn" data-go="home">Home</button>
+        <button class="btn" data-go="agents">Manage Agents</button>
+        <button class="btn" data-go="room_setup">Create Room</button>
+        <button class="btn" data-go="workspace">Workspace</button>
+        <button class="btn" data-go="billing">Billing</button>
+        <button class="btn" data-go="admin">Admin</button>
+      </div>
+    </div>
+
+    <section class="prototype">
+      <div class="proto-head">
+        <div class="crumbs">
+          <span class="pill" id="crumb1">Home</span>
+          <span>></span>
+          <span class="pill" id="crumb2">Preview</span>
+        </div>
+        <div class="status" id="status">Flow: User can create agents before rooms.</div>
+      </div>
+
+      <div class="view active" id="view-home">
+        <div class="grid cols-2">
+          <div class="panel">
+            <h3>Quick Start</h3>
+            <div class="body">
+              <div class="list">
+                <div class="item row">
+                  <div><strong>Inbox Copilot</strong><div class="muted">Email + meeting summaries</div></div>
+                  <button class="btn primary" data-go="room_setup">Use</button>
+                </div>
+                <div class="item row">
+                  <div><strong>Doc Review</strong><div class="muted">Upload docs + risks + edits</div></div>
+                  <button class="btn primary" data-go="room_setup">Use</button>
+                </div>
+                <div class="item row">
+                  <div><strong>Research Digest</strong><div class="muted">Web + synthesis</div></div>
+                  <button class="btn primary" data-go="room_setup">Use</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Start Here (Agent-First)</h3>
+            <div class="body">
+              <p class="muted">Users define reusable agents first, then assemble rooms from those agents.</p>
+              <div class="row" style="margin-top:10px;">
+                <button class="btn success" data-go="agents">Create / Manage Agents</button>
+                <button class="btn primary" data-go="room_setup">Create Room</button>
+              </div>
+              <div class="hint">MVP expectation: users should be able to complete first agent setup in under 2 minutes.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="view" id="view-agents">
+        <div class="grid cols-2">
+          <div class="panel">
+            <h3>Agent Library</h3>
+            <div class="body list">
+              <div class="item">
+                <strong>Research Analyst</strong><br>
+                <span class="tag">deepseek</span><span class="tag">search</span><span class="tag">fetch</span><span class="tag">files</span>
+                <div class="muted">Finds sources, summarizes facts, flags uncertainty.</div>
+              </div>
+              <div class="item">
+                <strong>Writer</strong><br>
+                <span class="tag">gpt_oss</span><span class="tag">code</span><span class="tag">files</span>
+                <div class="muted">Turns analysis into clear client-ready output.</div>
+              </div>
+              <div class="item">
+                <strong>Premium Reviewer</strong><br>
+                <span class="tag">premium</span><span class="tag">files</span><span class="tag">final pass</span>
+                <div class="muted">Checks quality and final recommendations.</div>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Create / Edit Agent</h3>
+            <div class="body">
+              <label class="muted">Agent Name</label>
+              <input class="input" value="New Agent">
+              <label class="muted" style="margin-top:8px;display:block;">Role Prompt</label>
+              <textarea class="input" rows="5">You are a concise analyst. Provide evidence-backed outputs.</textarea>
+              <label class="muted" style="margin-top:8px;display:block;">Model</label>
+              <select class="input">
+                <option>deepseek</option>
+                <option>qwen</option>
+                <option>llama</option>
+                <option>gpt_oss</option>
+                <option>premium</option>
+              </select>
+              <label class="muted" style="margin-top:8px;display:block;">Tool Access (per agent)</label>
+              <div class="item" style="margin-top:6px;">
+                <label><input type="checkbox" checked> search</label>
+                <label style="margin-left:10px;"><input type="checkbox" checked> fetch</label>
+                <label style="margin-left:10px;"><input type="checkbox"> code</label>
+                <label style="margin-left:10px;"><input type="checkbox" checked> files (upload/read)</label>
+              </div>
+              <div class="muted" style="margin-top:6px;">Agents can only use tools enabled here.</div>
+              <div class="row" style="margin-top:10px;">
+                <button class="btn">Delete</button>
+                <div>
+                  <button class="btn">Save Agent</button>
+                  <button class="btn primary" data-go="room_setup">Use In Room</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="view" id="view-room_setup">
+        <div class="grid cols-2">
+          <div class="panel">
+            <h3>Room Setup</h3>
+            <div class="body">
+              <label class="muted">Room Name</label>
+              <input class="input" value="Weekly Client Memo">
+              <label class="muted" style="margin-top:8px;display:block;">Mode</label>
+              <div class="row">
+                <span class="pill">manual</span>
+                <span class="pill">roundtable</span>
+                <span class="pill" style="border-color:#b7d1ff;background:#eaf2ff;color:#0a4bb9;">orchestrator</span>
+              </div>
+              <label class="muted" style="margin-top:8px;display:block;">Goal</label>
+              <textarea class="input" rows="4">Synthesize client updates and produce an executive summary.</textarea>
+              <div class="hint" style="margin-top:8px;">
+                File behavior: only agents with <strong>files</strong> capability can read uploads.
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Add Agents To Room</h3>
+            <div class="body list">
+              <div class="item row">
+                <div><strong>Research Analyst</strong><div class="muted">deepseek · tools: search, fetch, files</div></div>
+                <button class="btn">Add</button>
+              </div>
+              <div class="item row">
+                <div><strong>Writer</strong><div class="muted">gpt_oss · tools: code, files</div></div>
+                <button class="btn">Add</button>
+              </div>
+              <div class="item row">
+                <div><strong>Premium Reviewer</strong><div class="muted">premium · tools: files</div></div>
+                <button class="btn">Add</button>
+              </div>
+              <div class="row" style="margin-top:8px;">
+                <button class="btn" data-go="agents">Manage Agents</button>
+                <button class="btn primary" data-go="workspace">Create Room & Start</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="view" id="view-workspace">
+        <div class="grid cols-3">
+          <div class="panel">
+            <h3>Room + Agents</h3>
+            <div class="body">
+              <strong>Weekly Client Memo</strong>
+              <div class="muted">mode: orchestrator</div>
+              <div class="list" style="margin-top:8px;">
+                <div class="item"><strong>Research Analyst</strong><div class="muted">deepseek · tools: search, fetch, files</div></div>
+                <div class="item"><strong>Writer</strong><div class="muted">gpt_oss · tools: code, files</div></div>
+                <div class="item"><strong>Premium Reviewer</strong><div class="muted">premium · tools: files</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Conversation Timeline</h3>
+            <div class="body timeline list">
+              <div class="item"><strong>User</strong><div class="muted">Summarize uploaded docs and draft action plan.</div></div>
+              <div class="item"><strong>Research Analyst</strong><div class="muted">Extracted key risks and deadlines.</div></div>
+              <div class="item"><strong>Writer</strong><div class="muted">Created first draft summary.</div></div>
+              <div class="item"><strong>Premium Reviewer</strong><div class="muted">Improved structure and recommendation quality.</div></div>
+              <div class="item final"><strong>Final Synthesis</strong><div class="muted">Executive summary + action items.</div></div>
+            </div>
+            <div class="composer">
+              <input class="input" value="@research @writer improve section 2">
+              <button class="btn">Mode</button>
+              <button class="btn primary" data-go="turn_details">Send</button>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Tool Activity + Usage</h3>
+            <div class="body">
+              <div class="list">
+                <div class="item row"><span>search calls</span><strong>2</strong></div>
+                <div class="item row"><span>fetch calls</span><strong>1</strong></div>
+                <div class="item row"><span>code runs</span><strong>0</strong></div>
+                <div class="item row"><span>file reads</span><strong>2</strong></div>
+                <div class="item row"><span>file uploads</span><strong>2</strong></div>
+              </div>
+              <div class="item" style="margin-top:10px;">
+                <strong>Uploaded Files</strong>
+                <div class="muted">Q1_notes.pdf (read by Research Analyst)</div>
+                <div class="muted">deal_terms.pdf (read by Premium Reviewer)</div>
+              </div>
+              <div class="item" style="margin-top:10px;">
+                <strong>Mode File Rule</strong>
+                <div class="muted">Orchestrator: routes file-read tasks to agents with files capability.</div>
+                <div class="muted">Roundtable: all capable responding agents read file.</div>
+                <div class="muted">Tag mode: only tagged capable agents read file.</div>
+              </div>
+              <div style="margin-top:10px;">
+                <div class="muted">Turn: 3.8 credits</div>
+                <div class="muted">Session: 23.1 credits</div>
+                <div class="muted">Month: 120 / 495</div>
+              </div>
+              <div class="row" style="margin-top:10px;">
+                <button class="btn" data-go="billing">View Billing</button>
+                <button class="btn">Export</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="view" id="view-turn_details">
+        <div class="panel">
+          <h3>Turn #12 Details (Execution Transparency)</h3>
+          <div class="body list">
+            <div class="item">
+              <strong>Step 1: Research Analyst (deepseek)</strong>
+              <div class="muted">prompt 1120 | output 340 | cached 900 | credits 1.12 | latency 2.1s</div>
+            </div>
+            <div class="item">
+              <strong>Step 2: Writer (gpt_oss)</strong>
+              <div class="muted">prompt 1870 | output 420 | cached 1020 | credits 1.74 | latency 3.3s</div>
+            </div>
+            <div class="item">
+              <strong>Step 3: Premium Reviewer (premium)</strong>
+              <div class="muted">prompt 2020 | output 510 | cached 1020 | credits 0.94 | latency 4.9s</div>
+            </div>
+            <div class="item">
+              <strong>Tool calls</strong>
+              <div class="muted">search x2, fetch x1, file_reads x2, file_uploads x2, tool credits 0.8, turn total 4.6 credits</div>
+            </div>
+          </div>
+          <div class="row" style="padding:0 12px 12px;">
+            <button class="btn" data-go="workspace">Back To Workspace</button>
+            <button class="btn primary" data-go="billing">View Cost Impact</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="view" id="view-billing">
+        <div class="panel">
+          <h3>Billing + Usage</h3>
+          <div class="body">
+            <div class="kpis">
+              <div class="kpi">Plan<strong>Starter</strong></div>
+              <div class="kpi">Included<strong>495</strong></div>
+              <div class="kpi">Used<strong>120</strong></div>
+              <div class="kpi">Forecast<strong>340</strong></div>
+            </div>
+            <div class="list" style="margin-top:10px;">
+              <div class="item"><strong>Model Mix</strong><div class="muted">deepseek 58 | gpt_oss 24 | premium 18 | qwen 10 | llama 6</div></div>
+              <div class="item"><strong>Top Rooms</strong><div class="muted">Weekly Memo 54 | Contract Review 38 | Research Digest 28</div></div>
+              <div class="item"><strong>Overage</strong><div class="muted">$0.03 per credit after included credits are consumed.</div></div>
+            </div>
+            <div class="row" style="margin-top:10px;">
+              <button class="btn" data-go="workspace">Back</button>
+              <button class="btn primary">Upgrade Plan</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="view" id="view-admin">
+        <div class="panel">
+          <h3>Admin Panel (Internal)</h3>
+          <div class="body">
+            <div class="kpis">
+              <div class="kpi">DAU<strong>84</strong></div>
+              <div class="kpi">WAU<strong>260</strong></div>
+              <div class="kpi">MAU<strong>910</strong></div>
+              <div class="kpi">Margin<strong>73.4%</strong></div>
+            </div>
+            <div class="grid cols-2" style="margin-top:10px;">
+              <div class="panel">
+                <h3 style="font-size:12px;">Top Users By Cost</h3>
+                <div class="body list">
+                  <div class="item row"><span>user_122</span><span>$142</span></div>
+                  <div class="item row"><span>user_090</span><span>$121</span></div>
+                  <div class="item row"><span>user_044</span><span>$98</span></div>
+                </div>
+              </div>
+              <div class="panel">
+                <h3 style="font-size:12px;">Controls</h3>
+                <div class="body">
+                  <input class="input" value="user_122">
+                  <div class="row" style="margin-top:8px;">
+                    <input class="input" value="900 credits">
+                    <button class="btn">Update Cap</button>
+                  </div>
+                  <div class="row" style="margin-top:8px;">
+                    <button class="btn">Suspend</button>
+                    <button class="btn">Reactivate</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer-flow">
+      <div class="flow-steps" id="flowSteps">
+        <button data-go="home" class="active">1 Home</button>
+        <button data-go="agents">2 Manage Agents</button>
+        <button data-go="room_setup">3 Build Room</button>
+        <button data-go="workspace">4 Run Session</button>
+        <button data-go="turn_details">5 View Turn Details</button>
+        <button data-go="billing">6 Review Billing</button>
+      </div>
+      <div class="row">
+        <button class="btn" id="prevStep">Prev</button>
+        <button class="btn primary" id="nextStep">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const ordered = ["home", "agents", "room_setup", "workspace", "turn_details", "billing", "admin"];
+    const statusByView = {
+      home: "Flow start: user chooses template or creates agents first.",
+      agents: "Manage Agents: create reusable personas before rooms.",
+      room_setup: "Room assembly: pick mode + select agents from library.",
+      workspace: "Active session: agent outputs + tool/file activity telemetry + credits.",
+      turn_details: "Execution transparency: per-step tokens and costs.",
+      billing: "Trust surface: plan usage and overage visibility.",
+      admin: "Internal controls: analytics, caps, and model policies."
+    };
+
+    function setView(key) {
+      document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+      const target = document.getElementById("view-" + key);
+      if (!target) return;
+      target.classList.add("active");
+      document.getElementById("crumb1").textContent = key.replace("_", " ");
+      document.getElementById("crumb2").textContent = "interactive wireframe";
+      document.getElementById("status").textContent = statusByView[key] || "";
+      document.querySelectorAll("#flowSteps button").forEach(b => {
+        b.classList.toggle("active", b.dataset.go === key);
+      });
+    }
+
+    function currentView() {
+      const active = document.querySelector(".view.active");
+      if (!active) return "home";
+      return active.id.replace("view-", "");
+    }
+
+    document.querySelectorAll("[data-go]").forEach(btn => {
+      btn.addEventListener("click", () => setView(btn.dataset.go));
+    });
+
+    document.getElementById("nextStep").addEventListener("click", () => {
+      const idx = ordered.indexOf(currentView());
+      const next = ordered[Math.min(idx + 1, ordered.length - 1)];
+      setView(next);
+    });
+
+    document.getElementById("prevStep").addEventListener("click", () => {
+      const idx = ordered.indexOf(currentView());
+      const prev = ordered[Math.max(idx - 1, 0)];
+      setView(prev);
+    });
+  </script>
+</body>
+</html>

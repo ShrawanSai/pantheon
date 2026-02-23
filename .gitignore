@@ -212,9 +212,6 @@ marimo/_lsp/
 __marimo__/
 
 
-# nothing from docs should be included in the package
-docs/
-
 # Document artifacts (never commit)
 *.docx
 *.pdf
@@ -224,4 +221,3 @@ docs/
 # Frontend build artifacts
 node_modules/
 apps/web/.next/
-
