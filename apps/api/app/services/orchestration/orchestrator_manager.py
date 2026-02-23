@@ -5,8 +5,8 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from apps.api.app.db.models import RoomAgent
-from apps.api.app.services.llm.gateway import GatewayMessage, GatewayRequest, LlmGateway
+from apps.api.app.db.models import Agent
+from apps.api.app.services.llm.gateway import GatewayMessage, GatewayRequest, GatewayResponse, LlmGateway
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,7 +26,13 @@ class _RoutingResponse(BaseModel):
     selected_agent_key: str | None = None
 
 
-def _build_manager_system_prompt(agents: list[RoomAgent]) -> str:
+@dataclass(frozen=True)
+class OrchestratorSynthesisResult:
+    text: str
+    response: GatewayResponse
+
+
+def _build_manager_system_prompt(agents: list[Agent]) -> str:
     lines = [
         "You are a routing manager for a multi-agent council room.",
         "",
@@ -48,8 +54,53 @@ def _build_manager_system_prompt(agents: list[RoomAgent]) -> str:
     return "\n".join(lines)
 
 
+def build_orchestrator_synthesis_messages(
+    *,
+    user_input: str,
+    specialist_outputs: list[tuple[str, str]],
+) -> list[GatewayMessage]:
+    specialist_block = "\n\n".join(f"[{name}]: {text}" for name, text in specialist_outputs)
+    return [
+        GatewayMessage(
+            role="system",
+            content=(
+                "You are the orchestrating manager agent. Specialists have responded to the user's request below. "
+                "Synthesize their outputs into a single clear, consolidated response for the user. "
+                "Do not add new information; integrate and summarize what the specialists provided."
+            ),
+        ),
+        GatewayMessage(role="user", content=user_input),
+        GatewayMessage(role="system", content=f"Specialist outputs:\n{specialist_block}"),
+        GatewayMessage(role="system", content="Provide a concise synthesis of the above specialist perspectives."),
+    ]
+
+
+async def generate_orchestrator_synthesis(
+    *,
+    gateway: LlmGateway,
+    manager_model_alias: str,
+    user_input: str,
+    specialist_outputs: list[tuple[str, str]],
+    max_output_tokens: int,
+) -> OrchestratorSynthesisResult | None:
+    if not specialist_outputs:
+        return None
+
+    response = await gateway.generate(
+        GatewayRequest(
+            model_alias=manager_model_alias,
+            messages=build_orchestrator_synthesis_messages(
+                user_input=user_input,
+                specialist_outputs=specialist_outputs,
+            ),
+            max_output_tokens=max_output_tokens,
+        )
+    )
+    return OrchestratorSynthesisResult(text=response.text, response=response)
+
+
 async def route_turn(
-    agents: list[RoomAgent],
+    agents: list[Agent],
     user_input: str,
     gateway: LlmGateway,
     manager_model_alias: str,

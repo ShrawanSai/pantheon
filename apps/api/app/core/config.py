@@ -23,6 +23,7 @@ class Settings:
     context_mandatory_summary_turn: int
     context_default_model_limit: int
     context_recent_turns_to_keep: int
+    agent_private_context_turns_keep: int
     pricing_version: str
     orchestrator_manager_model_alias: str
     summarizer_model_alias: str
@@ -32,6 +33,13 @@ class Settings:
     admin_user_ids: tuple[str, ...]
     low_balance_threshold: float
     credit_enforcement_enabled: bool
+    stripe_secret_key: str
+    stripe_webhook_secret: str
+    top_up_min_usd: float
+    top_up_max_usd: float
+    credits_per_usd: float
+    rate_limit_turns_per_minute: int
+    rate_limit_turns_per_hour: int
 
 
 def _int_env(name: str, default: int) -> int:
@@ -87,6 +95,7 @@ def get_settings() -> Settings:
         context_mandatory_summary_turn=_int_env("CONTEXT_MANDATORY_SUMMARY_TURN", 8),
         context_default_model_limit=_int_env("CONTEXT_DEFAULT_MODEL_LIMIT", 8192),
         context_recent_turns_to_keep=_int_env("CONTEXT_RECENT_TURNS_TO_KEEP", 4),
+        agent_private_context_turns_keep=_int_env("AGENT_PRIVATE_CONTEXT_TURNS_KEEP", 3),
         pricing_version=os.getenv("PRICING_VERSION", "2026-02-20"),
         orchestrator_manager_model_alias=os.getenv("ORCHESTRATOR_MANAGER_MODEL_ALIAS", "deepseek"),
         summarizer_model_alias=os.getenv("SUMMARIZER_MODEL_ALIAS", "deepseek"),
@@ -96,4 +105,11 @@ def get_settings() -> Settings:
         admin_user_ids=admin_user_ids,
         low_balance_threshold=_float_env("LOW_BALANCE_THRESHOLD", 5.0),
         credit_enforcement_enabled=_bool_env("CREDIT_ENFORCEMENT_ENABLED", False),
+        stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
+        stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
+        top_up_min_usd=_float_env("TOP_UP_MIN_USD", 1.0),
+        top_up_max_usd=_float_env("TOP_UP_MAX_USD", 500.0),
+        credits_per_usd=_float_env("CREDITS_PER_USD", 1.0 / 0.03),
+        rate_limit_turns_per_minute=_int_env("RATE_LIMIT_TURNS_PER_MINUTE", 10),
+        rate_limit_turns_per_hour=_int_env("RATE_LIMIT_TURNS_PER_HOUR", 60),
     )

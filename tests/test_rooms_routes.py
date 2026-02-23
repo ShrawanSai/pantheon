@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -18,7 +19,7 @@ os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "dummy-service-role-key")
 os.environ.setdefault("API_CORS_ALLOWED_ORIGINS", "http://localhost:3000")
 
 from apps.api.app.dependencies.auth import get_current_user
-from apps.api.app.db.models import Base, Room, RoomAgent, UploadedFile, User
+from apps.api.app.db.models import Agent, Base, Room, RoomAgent, UploadedFile, User
 from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.arq import get_arq_redis
 from apps.api.app.main import app
@@ -105,6 +106,17 @@ class RoomRoutesTests(unittest.TestCase):
         self.fake_storage.uploads.clear()
         self.fake_arq_redis.enqueued.clear()
 
+        async def reset_rows() -> None:
+            async with self.session_factory() as session:
+                await session.execute(delete(UploadedFile))
+                await session.execute(delete(RoomAgent))
+                await session.execute(delete(Agent))
+                await session.execute(delete(Room))
+                await session.execute(delete(User))
+                await session.commit()
+
+        asyncio.run(reset_rows())
+
     def _seed_user_and_room(
         self,
         *,
@@ -136,6 +148,40 @@ class RoomRoutesTests(unittest.TestCase):
         asyncio.run(insert_rows())
         return room_id
 
+    def _seed_agent(
+        self,
+        *,
+        owner_user_id: str,
+        agent_key: str,
+        name: str = "Agent",
+        model_alias: str = "deepseek",
+        role_prompt: str = "Do work",
+        tool_permissions: list[str] | None = None,
+    ) -> str:
+        agent_id = str(uuid4())
+        permissions = tool_permissions or []
+
+        async def insert_agent_row() -> None:
+            async with self.session_factory() as session:
+                existing_user = await session.get(User, owner_user_id)
+                if existing_user is None:
+                    session.add(User(id=owner_user_id, email=f"{owner_user_id}@example.com"))
+                session.add(
+                    Agent(
+                        id=agent_id,
+                        owner_user_id=owner_user_id,
+                        agent_key=agent_key,
+                        name=name,
+                        model_alias=model_alias,
+                        role_prompt=role_prompt,
+                        tool_permissions_json=json.dumps(permissions),
+                    )
+                )
+                await session.commit()
+
+        asyncio.run(insert_agent_row())
+        return agent_id
+
     def _seed_room_agent(
         self,
         *,
@@ -147,27 +193,35 @@ class RoomRoutesTests(unittest.TestCase):
         position: int = 1,
         tool_permissions: list[str] | None = None,
     ) -> str:
-        agent_id = str(uuid4())
-        permissions = tool_permissions or []
-
-        async def insert_agent() -> None:
+        async def insert_assignment() -> str:
             async with self.session_factory() as session:
+                room = await session.get(Room, room_id)
+                if room is None:
+                    raise RuntimeError("Room not found for assignment seed.")
+                agent_id = str(uuid4())
                 session.add(
-                    RoomAgent(
+                    Agent(
                         id=agent_id,
-                        room_id=room_id,
+                        owner_user_id=room.owner_user_id,
                         agent_key=agent_key,
                         name=name,
                         model_alias=model_alias,
                         role_prompt=role_prompt,
-                        tool_permissions_json=json.dumps(permissions),
+                        tool_permissions_json=json.dumps(tool_permissions or []),
+                    )
+                )
+                session.add(
+                    RoomAgent(
+                        id=str(uuid4()),
+                        room_id=room_id,
+                        agent_id=agent_id,
                         position=position,
                     )
                 )
                 await session.commit()
+                return agent_id
 
-        asyncio.run(insert_agent())
-        return agent_id
+        return asyncio.run(insert_assignment())
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -364,42 +418,125 @@ class RoomRoutesTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json(), {"detail": "Room not found."})
 
+    def test_mode_patch_to_manual(self) -> None:
+        room_id = self._seed_user_and_room(
+            owner_user_id="user-123",
+            owner_email="user@example.com",
+            room_name="Mode Manual Room",
+        )
+        response = self.client.patch(
+            f"/api/v1/rooms/{room_id}/mode",
+            json={"mode": "manual"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["id"], room_id)
+        self.assertEqual(body["current_mode"], "manual")
+
+    def test_mode_patch_to_roundtable(self) -> None:
+        room_id = self._seed_user_and_room(
+            owner_user_id="user-123",
+            owner_email="user@example.com",
+            room_name="Mode Roundtable Room",
+        )
+        response = self.client.patch(
+            f"/api/v1/rooms/{room_id}/mode",
+            json={"mode": "roundtable"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["id"], room_id)
+        self.assertEqual(body["current_mode"], "roundtable")
+
+    def test_mode_patch_orchestrator_allowed(self) -> None:
+        room_id = self._seed_user_and_room(
+            owner_user_id="user-123",
+            owner_email="user@example.com",
+            room_name="Mode Orchestrator Allowed Room",
+        )
+        response = self.client.patch(
+            f"/api/v1/rooms/{room_id}/mode",
+            json={"mode": "orchestrator"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["id"], room_id)
+        self.assertEqual(body["current_mode"], "orchestrator")
+
+    def test_mode_patch_unknown_mode_rejected(self) -> None:
+        room_id = self._seed_user_and_room(
+            owner_user_id="user-123",
+            owner_email="user@example.com",
+            room_name="Mode Unknown Rejected Room",
+        )
+        response = self.client.patch(
+            f"/api/v1/rooms/{room_id}/mode",
+            json={"mode": "flying_spaghetti"},
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(),
+            {"detail": "unsupported mode; allowed: manual, roundtable, orchestrator"},
+        )
+
+    def test_mode_patch_foreign_room_404(self) -> None:
+        room_id = self._seed_user_and_room(
+            owner_user_id="other-owner",
+            owner_email="other-owner@example.com",
+            room_name="Mode Foreign Room",
+        )
+        response = self.client.patch(
+            f"/api/v1/rooms/{room_id}/mode",
+            json={"mode": "manual"},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Room not found."})
+
     def test_create_room_agent_persists_for_owned_room(self) -> None:
         room_id = self._seed_user_and_room(
             owner_user_id="user-123",
             owner_email="user@example.com",
             room_name="Agent Room",
         )
+        agent_id = self._seed_agent(
+            owner_user_id="user-123",
+            agent_key="researcher",
+            name="Research Analyst",
+            model_alias="deepseek",
+            role_prompt="Find facts.",
+            tool_permissions=["search", "fetch"],
+        )
         response = self.client.post(
             f"/api/v1/rooms/{room_id}/agents",
             json={
-                "agent_key": "researcher",
-                "name": "Research Analyst",
-                "model_alias": "deepseek",
-                "role_prompt": "Find facts.",
-                "tool_permissions": ["search", "fetch"],
+                "agent_id": agent_id,
             },
         )
         self.assertEqual(response.status_code, 201)
         body = response.json()
         self.assertEqual(body["room_id"], room_id)
-        self.assertEqual(body["agent_key"], "researcher")
-        self.assertEqual(body["tool_permissions"], ["search", "fetch"])
+        self.assertEqual(body["agent_id"], agent_id)
+        self.assertEqual(body["agent"]["agent_key"], "researcher")
+        self.assertEqual(body["agent"]["tool_permissions"], ["search", "fetch"])
 
-    def test_create_room_agent_returns_409_on_duplicate_agent_key(self) -> None:
+    def test_create_room_agent_returns_409_on_duplicate_agent_assignment(self) -> None:
         room_id = self._seed_user_and_room(
             owner_user_id="user-123",
             owner_email="user@example.com",
             room_name="Duplicate Agent Room",
         )
+        agent_id = self._seed_agent(
+            owner_user_id="user-123",
+            agent_key="writer",
+            name="Writer",
+            model_alias="qwen",
+            role_prompt="Write text.",
+            tool_permissions=[],
+        )
         first = self.client.post(
             f"/api/v1/rooms/{room_id}/agents",
             json={
-                "agent_key": "writer",
-                "name": "Writer",
-                "model_alias": "qwen",
-                "role_prompt": "Write text.",
-                "tool_permissions": [],
+                "agent_id": agent_id,
             },
         )
         self.assertEqual(first.status_code, 201)
@@ -407,15 +544,11 @@ class RoomRoutesTests(unittest.TestCase):
         duplicate = self.client.post(
             f"/api/v1/rooms/{room_id}/agents",
             json={
-                "agent_key": "writer",
-                "name": "Writer 2",
-                "model_alias": "llama",
-                "role_prompt": "Write more text.",
-                "tool_permissions": [],
+                "agent_id": agent_id,
             },
         )
         self.assertEqual(duplicate.status_code, 409)
-        self.assertEqual(duplicate.json(), {"detail": "Agent key already exists in this room."})
+        self.assertEqual(duplicate.json(), {"detail": "Agent already assigned to this room."})
 
     def test_create_room_agent_returns_404_for_not_owned_room(self) -> None:
         room_id = self._seed_user_and_room(
@@ -423,18 +556,43 @@ class RoomRoutesTests(unittest.TestCase):
             owner_email="other-owner@example.com",
             room_name="Private Agent Room",
         )
+        agent_id = self._seed_agent(
+            owner_user_id="user-123",
+            agent_key="reviewer",
+            name="Reviewer",
+            model_alias="gpt_oss",
+            role_prompt="Review work.",
+            tool_permissions=[],
+        )
         response = self.client.post(
             f"/api/v1/rooms/{room_id}/agents",
             json={
-                "agent_key": "reviewer",
-                "name": "Reviewer",
-                "model_alias": "gpt_oss",
-                "role_prompt": "Review work.",
-                "tool_permissions": [],
+                "agent_id": agent_id,
             },
         )
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json(), {"detail": "Room not found."})
+
+    def test_create_room_agent_rejects_agent_owned_by_other_user(self) -> None:
+        room_id = self._seed_user_and_room(
+            owner_user_id="user-123",
+            owner_email="user@example.com",
+            room_name="Agent Ownership Room",
+        )
+        foreign_agent_id = self._seed_agent(
+            owner_user_id="other-owner",
+            agent_key="foreign-agent",
+            name="Foreign Agent",
+            model_alias="qwen",
+            role_prompt="Not owned by room user.",
+            tool_permissions=[],
+        )
+        response = self.client.post(
+            f"/api/v1/rooms/{room_id}/agents",
+            json={"agent_id": foreign_agent_id},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Agent not found."})
 
     def test_list_room_agents_returns_owned_room_agents(self) -> None:
         own_room_id = self._seed_user_and_room(
@@ -474,7 +632,7 @@ class RoomRoutesTests(unittest.TestCase):
         response = self.client.get(f"/api/v1/rooms/{own_room_id}/agents")
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual([agent["agent_key"] for agent in body], ["writer", "researcher"])
+        self.assertEqual([agent["agent"]["agent_key"] for agent in body], ["writer", "researcher"])
 
     def test_list_room_agents_returns_404_for_not_owned_room(self) -> None:
         room_id = self._seed_user_and_room(
@@ -492,7 +650,7 @@ class RoomRoutesTests(unittest.TestCase):
             owner_email="user@example.com",
             room_name="Delete Agent Room",
         )
-        self._seed_room_agent(
+        agent_id = self._seed_room_agent(
             room_id=room_id,
             agent_key="reviewer",
             name="Reviewer",
@@ -500,7 +658,7 @@ class RoomRoutesTests(unittest.TestCase):
             position=1,
         )
 
-        response = self.client.delete(f"/api/v1/rooms/{room_id}/agents/reviewer")
+        response = self.client.delete(f"/api/v1/rooms/{room_id}/agents/{agent_id}")
         self.assertEqual(response.status_code, 204)
 
         list_response = self.client.get(f"/api/v1/rooms/{room_id}/agents")
@@ -513,24 +671,24 @@ class RoomRoutesTests(unittest.TestCase):
             owner_email="other4@example.com",
             room_name="Other Owner Delete Agent",
         )
-        self._seed_room_agent(
+        agent_id = self._seed_room_agent(
             room_id=room_id,
             agent_key="writer",
             name="Writer",
             model_alias="qwen",
             position=1,
         )
-        response = self.client.delete(f"/api/v1/rooms/{room_id}/agents/writer")
+        response = self.client.delete(f"/api/v1/rooms/{room_id}/agents/{agent_id}")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json(), {"detail": "Room not found."})
 
-    def test_delete_room_agent_returns_404_when_agent_key_not_found(self) -> None:
+    def test_delete_room_agent_returns_404_when_agent_id_not_found(self) -> None:
         room_id = self._seed_user_and_room(
             owner_user_id="user-123",
             owner_email="user@example.com",
             room_name="No Agent Room",
         )
-        response = self.client.delete(f"/api/v1/rooms/{room_id}/agents/nonexistent")
+        response = self.client.delete(f"/api/v1/rooms/{room_id}/agents/{uuid4()}")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json(), {"detail": "Agent not found."})
 

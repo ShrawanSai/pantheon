@@ -89,6 +89,14 @@ class AdminGrantResponse(BaseModel):
     transaction_id: str
 
 
+class AdminUserGrantResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    credits_granted: float
+    new_balance: str
+
+
 class AdminEnforcementUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -109,3 +117,32 @@ class AdminSettingsRead(BaseModel):
     enforcement_source: str
     low_balance_threshold: float
     pricing_version: str
+
+
+class AdminUsageAnalyticsRowRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    model_alias: str
+    total_input_tokens: int
+    total_output_tokens: int
+    total_credits_burned: str
+    event_count: int
+
+
+class AdminUsageAnalyticsRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rows: list[AdminUsageAnalyticsRowRead]
+    total: int
+    start_date: date
+    end_date: date
+
+
+class AdminActiveUsersRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    window: str
+    as_of: date
+    active_users: int
+    new_users: int

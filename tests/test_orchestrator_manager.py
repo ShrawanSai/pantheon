@@ -6,7 +6,7 @@ from uuid import uuid4
 import unittest
 from unittest.mock import patch
 
-from apps.api.app.db.models import RoomAgent
+from apps.api.app.db.models import Agent
 from apps.api.app.services.llm.gateway import GatewayRequest, GatewayResponse, GatewayUsage
 from apps.api.app.services.orchestration.orchestrator_manager import route_turn
 
@@ -30,16 +30,16 @@ class FakeGateway:
         )
 
 
-def _agent(key: str, role_prompt: str, model_alias: str = "deepseek", position: int = 1) -> RoomAgent:
-    return RoomAgent(
+def _agent(key: str, role_prompt: str, model_alias: str = "deepseek", position: int = 1) -> Agent:
+    _ = position
+    return Agent(
         id=str(uuid4()),
-        room_id="room-1",
+        owner_user_id="user-1",
         agent_key=key,
         name=key.title(),
         model_alias=model_alias,
         role_prompt=role_prompt,
         tool_permissions_json="[]",
-        position=position,
     )
 
 
