@@ -60,6 +60,7 @@ from apps.api.app.services.orchestration.mode_executor import (
 )
 from apps.api.app.services.orchestration.orchestrator_manager import (
     build_orchestrator_synthesis_messages,
+    evaluate_orchestrator_round,
     generate_orchestrator_synthesis,
     route_turn,
 )
@@ -462,7 +463,6 @@ async def create_turn(
         ).all()
         active_room_agent = room_agents[0] if room_agents else None
         manual_tag_selected_agents: list[RoomAgent] = []
-        orchestrator_selected_agents: list[RoomAgent] = []
 
         if room.current_mode in {"manual", "tag"}:
             tagged_keys = _extract_tagged_agent_keys(payload.message)
@@ -490,23 +490,11 @@ async def create_turn(
                 raise HTTPException(
                     status_code=422,
                     detail={
-                        "code": "no_room_agents",
-                        "message": "Orchestrator mode requires at least one agent.",
-                    },
-                )
-            decision = await route_turn(
-                agents=[assignment.agent for assignment in room_agents],
-                user_input=payload.message,
-                gateway=llm_gateway,
-                manager_model_alias=settings.orchestrator_manager_model_alias,
+                    "code": "no_room_agents",
+                    "message": "Orchestrator mode requires at least one agent.",
+                },
             )
-            by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
-            orchestrator_selected_agents = [
-                by_key[key.lower()] for key in decision.selected_agent_keys if key.lower() in by_key
-            ]
-            if not orchestrator_selected_agents:
-                orchestrator_selected_agents = [room_agents[0]]
-            active_room_agent = orchestrator_selected_agents[0]
+            active_room_agent = room_agents[0]
         if room.current_mode == "roundtable" and not room_agents:
             raise HTTPException(
                 status_code=422,
@@ -518,22 +506,12 @@ async def create_turn(
 
         if room.current_mode == "roundtable":
             selected_assignments = room_agents
-        elif room.current_mode == "orchestrator":
-            selected_assignments = orchestrator_selected_agents or (
-                [active_room_agent] if active_room_agent is not None else []
-            )
         elif room.current_mode in {"manual", "tag"}:
             selected_assignments = manual_tag_selected_agents or (
                 [active_room_agent] if active_room_agent is not None else []
             )
         else:
             selected_assignments = [active_room_agent] if active_room_agent is not None else []
-        if room.current_mode == "orchestrator" and len(selected_assignments) > 3:
-            _LOGGER.warning(
-                "Orchestrator selected %d agents; truncating to 3 per MVP cap.",
-                len(selected_assignments),
-            )
-            selected_assignments = selected_assignments[:3]
 
         selected_agents = [_room_agent_to_selected_agent(assignment) for assignment in selected_assignments]
         active_agent = _room_agent_to_selected_agent(active_room_agent) if active_room_agent else None
@@ -586,9 +564,10 @@ async def create_turn(
     context_manager = _build_context_manager()
     next_turn_index = int(await db.scalar(select(func.max(Turn.turn_index)).where(Turn.session_id == session.id)) or 0)
 
-    share_same_turn_outputs = turn_mode in {"roundtable", "orchestrator"}
+    share_same_turn_outputs = turn_mode == "roundtable"
     prior_roundtable_outputs: list[GatewayMessage] = []
     assistant_entries: list[tuple[_SelectedAgent, str]] = []
+    per_round_entries: list[list[tuple[_SelectedAgent, str]]] = []
     usage_entries: list[tuple[str | None, str, str, int, int, int, int]] = []
     tool_event_entries: list[tuple[str | None, tuple[ToolCallRecord, ...]]] = []
     tool_trace_entries: list[tuple[_SelectedAgent, tuple[ToolCallRecord, ...]]] = []
@@ -596,6 +575,9 @@ async def create_turn(
     last_debit_balance: Decimal | None = None
     summary_used_fallback = False
     primary_context = None
+    orch_round_num = 0
+    orch_total_invocations = 0
+    orch_all_specialist_outputs: list[tuple[str, str]] = []
 
     def _build_history_messages_for_agent(current_agent_key: str | None) -> list[HistoryMessage]:
         if room is not None:
@@ -638,10 +620,8 @@ async def create_turn(
             )
         return output
 
-    for selected_agent in selected_agents:
-        if selected_agent is None:
-            continue
-
+    async def _invoke_selected_agent(selected_agent: _SelectedAgent) -> tuple[str, bool]:
+        nonlocal primary_context, turn_status
         selected_agent_name = selected_agent.name
         selected_agent_alias = payload.model_alias_override or selected_agent.model_alias
         selected_agent_role = selected_agent.role_prompt
@@ -697,7 +677,6 @@ async def create_turn(
             *[GatewayMessage(role=item.role, content=item.content) for item in context.messages],
             *prior_roundtable_outputs,
         ]
-        allowed_tools = selected_agent_tools
 
         try:
             gateway_response = await mode_executor.run_turn(
@@ -707,7 +686,7 @@ async def create_turn(
                     messages=request_messages,
                     max_output_tokens=settings.context_max_output_tokens,
                     thread_id=f"{session.id}:{next_turn_index + 1}:{selected_agent_name}",
-                    allowed_tool_names=allowed_tools,
+                    allowed_tool_names=selected_agent_tools,
                     room_id=session.room_id or "",
                 ),
             )
@@ -723,20 +702,13 @@ async def create_turn(
                     gateway_response.usage.total_tokens,
                 )
             )
-            tool_event_entries.append(
-                (
-                    selected_agent_key,
-                    gateway_response.tool_calls,
-                )
-            )
+            tool_event_entries.append((selected_agent_key, gateway_response.tool_calls))
             tool_trace_entries.append((selected_agent, gateway_response.tool_calls))
             if share_same_turn_outputs:
                 prior_roundtable_outputs.append(
-                    GatewayMessage(
-                        role="assistant",
-                        content=f"{selected_agent_name}: {gateway_response.text}",
-                    )
+                    GatewayMessage(role="assistant", content=f"{selected_agent_name}: {gateway_response.text}")
                 )
+            return gateway_response.text, True
         except Exception as exc:
             turn_status = "partial"
             error_content = (
@@ -748,17 +720,68 @@ async def create_turn(
                 prior_roundtable_outputs.append(
                     GatewayMessage(role="assistant", content=f"{selected_agent_name}: {error_content}")
                 )
+            return error_content, False
+
+    if turn_mode == "orchestrator":
+        orch_max_depth = max(settings.orchestrator_max_depth, 1)
+        orch_max_cap = max(settings.orchestrator_max_specialist_invocations, 1)
+        while orch_round_num < orch_max_depth and orch_total_invocations < orch_max_cap:
+            orch_round_num += 1
+            prior_outputs_for_routing = orch_all_specialist_outputs if orch_round_num > 1 else None
+            routing = await route_turn(
+                agents=[assignment.agent for assignment in room_agents],
+                user_input=payload.message,
+                gateway=llm_gateway,
+                manager_model_alias=settings.orchestrator_manager_model_alias,
+                prior_round_outputs=prior_outputs_for_routing,
+            )
+            by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
+            round_assignments = [by_key[k.lower()] for k in routing.selected_agent_keys if k.lower() in by_key]
+            if not round_assignments:
+                round_assignments = [room_agents[0]]
+
+            remaining = orch_max_cap - orch_total_invocations
+            round_assignments = round_assignments[: min(3, remaining)]
+            if not round_assignments:
+                break
+
+            round_outputs: list[tuple[_SelectedAgent, str]] = []
+            for assignment in round_assignments:
+                selected_agent = _room_agent_to_selected_agent(assignment)
+                text_output, succeeded = await _invoke_selected_agent(selected_agent)
+                round_outputs.append((selected_agent, text_output))
+                if succeeded:
+                    orch_all_specialist_outputs.append((selected_agent.name, text_output))
+                orch_total_invocations += 1
+
+            per_round_entries.append(round_outputs)
+            if not any(not text.startswith("[[agent_error]]") for _, text in round_outputs):
+                _LOGGER.info("Stopping orchestrator loop for session %s: round %d had no successful outputs.", session.id, orch_round_num)
+                break
+
+            if orch_round_num < orch_max_depth and orch_total_invocations < orch_max_cap:
+                eval_decision = await evaluate_orchestrator_round(
+                    gateway=llm_gateway,
+                    manager_model_alias=settings.orchestrator_manager_model_alias,
+                    user_input=payload.message,
+                    all_round_outputs=orch_all_specialist_outputs,
+                    current_round=orch_round_num,
+                )
+                if not eval_decision.should_continue:
+                    break
+    else:
+        for selected_agent in selected_agents:
+            if selected_agent is None:
+                continue
+            text_output, _ = await _invoke_selected_agent(selected_agent)
+            per_round_entries.append([(selected_agent, text_output)])
 
     if primary_context is None:
         raise HTTPException(status_code=422, detail="No executable agent found for this turn.")
 
     manager_synthesis_text: str | None = None
     if turn_mode == "orchestrator":
-        specialist_outputs = [
-            (entry_agent.name, entry_content)
-            for entry_agent, entry_content in assistant_entries
-            if not entry_content.startswith("[[agent_error]]")
-        ]
+        specialist_outputs = orch_all_specialist_outputs
         if specialist_outputs:
             try:
                 synthesis_result = await generate_orchestrator_synthesis(
@@ -791,17 +814,36 @@ async def create_turn(
         else:
             _LOGGER.info("Skipping orchestrator synthesis for session %s: no specialist outputs.", session.id)
 
-    multi_agent_mode = len(selected_agents) > 1
+    model_alias_for_marker = model_alias
+    if turn_mode == "orchestrator" and usage_entries:
+        model_alias_for_marker = usage_entries[0][1]
+    multi_agent_mode = orch_total_invocations > 1 if turn_mode == "orchestrator" else len(selected_agents) > 1
     model_alias_marker = (
         "roundtable"
         if turn_mode == "roundtable"
-        else ("multi-agent" if turn_mode == "orchestrator" and multi_agent_mode else model_alias)
+        else ("multi-agent" if turn_mode == "orchestrator" and multi_agent_mode else model_alias_for_marker)
     )
-    assistant_output_text = (
-        "\n\n".join([f"{entry_agent.name}: {content}" for entry_agent, content in assistant_entries])
-        if multi_agent_mode
-        else (assistant_entries[0][1] if assistant_entries else "")
-    )
+    if turn_mode == "orchestrator" and per_round_entries:
+        if len(per_round_entries) > 1:
+            round_blocks: list[str] = []
+            for round_idx, round_entries in enumerate(per_round_entries, start=1):
+                lines = [f"[Round {round_idx}]"]
+                lines.extend(f"{entry_agent.name}: {content}" for entry_agent, content in round_entries)
+                round_blocks.append("\n".join(lines))
+            assistant_output_text = "\n\n".join(round_blocks)
+        else:
+            single_round = per_round_entries[0]
+            assistant_output_text = (
+                "\n\n".join(f"{entry_agent.name}: {content}" for entry_agent, content in single_round)
+                if len(single_round) > 1
+                else (single_round[0][1] if single_round else "")
+            )
+    else:
+        assistant_output_text = (
+            "\n\n".join([f"{entry_agent.name}: {content}" for entry_agent, content in assistant_entries])
+            if multi_agent_mode
+            else (assistant_entries[0][1] if assistant_entries else "")
+        )
     if manager_synthesis_text:
         synthesis_block = f"Manager synthesis:\n{manager_synthesis_text}"
         assistant_output_text = (
@@ -1085,7 +1127,6 @@ async def create_turn_stream(
         ).all()
         active_room_agent = room_agents[0] if room_agents else None
         manual_tag_selected_agents: list[RoomAgent] = []
-        orchestrator_selected_agents: list[RoomAgent] = []
 
         if room.current_mode in {"manual", "tag"}:
             tagged_keys = _extract_tagged_agent_keys(payload.message)
@@ -1113,23 +1154,11 @@ async def create_turn_stream(
                 raise HTTPException(
                     status_code=422,
                     detail={
-                        "code": "no_room_agents",
-                        "message": "Orchestrator mode requires at least one agent.",
-                    },
-                )
-            decision = await route_turn(
-                agents=[assignment.agent for assignment in room_agents],
-                user_input=payload.message,
-                gateway=llm_gateway,
-                manager_model_alias=settings.orchestrator_manager_model_alias,
+                    "code": "no_room_agents",
+                    "message": "Orchestrator mode requires at least one agent.",
+                },
             )
-            by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
-            orchestrator_selected_agents = [
-                by_key[key.lower()] for key in decision.selected_agent_keys if key.lower() in by_key
-            ]
-            if not orchestrator_selected_agents:
-                orchestrator_selected_agents = [room_agents[0]]
-            active_room_agent = orchestrator_selected_agents[0]
+            active_room_agent = room_agents[0]
         if room.current_mode == "roundtable" and not room_agents:
             raise HTTPException(
                 status_code=422,
@@ -1141,22 +1170,12 @@ async def create_turn_stream(
 
         if room.current_mode == "roundtable":
             selected_assignments = room_agents
-        elif room.current_mode == "orchestrator":
-            selected_assignments = orchestrator_selected_agents or (
-                [active_room_agent] if active_room_agent is not None else []
-            )
         elif room.current_mode in {"manual", "tag"}:
             selected_assignments = manual_tag_selected_agents or (
                 [active_room_agent] if active_room_agent is not None else []
             )
         else:
             selected_assignments = [active_room_agent] if active_room_agent is not None else []
-        if room.current_mode == "orchestrator" and len(selected_assignments) > 3:
-            _LOGGER.warning(
-                "Orchestrator selected %d agents; truncating to 3 per MVP cap.",
-                len(selected_assignments),
-            )
-            selected_assignments = selected_assignments[:3]
 
         selected_agents = [_room_agent_to_selected_agent(assignment) for assignment in selected_assignments]
         active_agent = _room_agent_to_selected_agent(active_room_agent) if active_room_agent else None
@@ -1168,7 +1187,10 @@ async def create_turn_stream(
         selected_agents = [active_agent]
         turn_mode = "standalone"
 
-    if any(agent.tool_permissions for agent in selected_agents):
+    if turn_mode == "orchestrator":
+        if any(get_permitted_tool_names(assignment.agent) for assignment in room_agents if assignment.agent is not None):
+            raise HTTPException(status_code=422, detail="streaming not supported when tools are enabled")
+    elif any(agent.tool_permissions for agent in selected_agents):
         raise HTTPException(status_code=422, detail="streaming not supported when tools are enabled")
 
     if get_enforcement_enabled(settings.credit_enforcement_enabled):
@@ -1208,7 +1230,7 @@ async def create_turn_stream(
         )
     next_turn_index = int(await db.scalar(select(func.max(Turn.turn_index)).where(Turn.session_id == session.id)) or 0)
     context_manager = _build_context_manager()
-    share_same_turn_outputs = turn_mode in {"roundtable", "orchestrator"}
+    share_same_turn_outputs = turn_mode == "roundtable"
 
     def _build_history_messages_for_agent(current_agent_key: str | None) -> list[HistoryMessage]:
         if room is not None:
@@ -1253,19 +1275,25 @@ async def create_turn_stream(
     async def _stream_turn() -> AsyncIterator[str]:
         prior_roundtable_outputs: list[GatewayMessage] = []
         assistant_entries: list[tuple[_SelectedAgent, str]] = []
+        per_round_entries: list[list[tuple[_SelectedAgent, str]]] = []
         usage_entries: list[tuple[str | None, str, str, int, int, int, int]] = []
         turn_status = "completed"
         primary_context = None
         summary_used_fallback = False
         last_debit_balance: Decimal | None = None
         manager_synthesis_text: str | None = None
+        orch_round_num = 0
+        orch_total_invocations = 0
+        orch_all_specialist_outputs: list[tuple[str, str]] = []
 
-        for selected_agent in selected_agents:
+        async def _stream_agent(selected_agent: _SelectedAgent) -> tuple[str, bool, list[str]]:
+            nonlocal primary_context, turn_status
             selected_agent_name = selected_agent.name
             selected_agent_alias = payload.model_alias_override or selected_agent.model_alias
             selected_agent_role = selected_agent.role_prompt
             selected_agent_id = selected_agent.agent_id
             selected_agent_key = selected_agent.agent_key
+            sse_events: list[str] = []
 
             if room is not None and turn_mode == "roundtable":
                 system_messages = [
@@ -1324,12 +1352,11 @@ async def create_turn_stream(
                         max_output_tokens=settings.context_max_output_tokens,
                     )
                 )
-                if len(selected_agents) > 1:
-                    prefix = f"{selected_agent_name}: "
-                    yield _sse_event({"type": "chunk", "delta": prefix})
+                if turn_mode == "orchestrator" or len(selected_agents) > 1:
+                    sse_events.append(_sse_event({"type": "chunk", "delta": f"{selected_agent_name}: "}))
                 async for delta in stream_ctx.chunks:
                     output_parts.append(delta)
-                    yield _sse_event({"type": "chunk", "delta": delta})
+                    sse_events.append(_sse_event({"type": "chunk", "delta": delta}))
 
                 streamed_text = "".join(output_parts)
                 usage = await stream_ctx.usage_future
@@ -1351,6 +1378,7 @@ async def create_turn_stream(
                     prior_roundtable_outputs.append(
                         GatewayMessage(role="assistant", content=f"{selected_agent_name}: {streamed_text}")
                     )
+                return streamed_text, True, sse_events
             except Exception as exc:
                 turn_status = "partial"
                 error_content = (
@@ -1358,21 +1386,81 @@ async def create_turn_stream(
                     f"type={exc.__class__.__name__} message={str(exc) or 'execution_failed'}"
                 )
                 assistant_entries.append((selected_agent, error_content))
-                yield _sse_event({"type": "chunk", "delta": f"{selected_agent_name}: {error_content}"})
+                sse_events.append(_sse_event({"type": "chunk", "delta": f"{selected_agent_name}: {error_content}"}))
                 if share_same_turn_outputs:
                     prior_roundtable_outputs.append(
                         GatewayMessage(role="assistant", content=f"{selected_agent_name}: {error_content}")
                     )
+                return error_content, False, sse_events
+
+        if turn_mode == "orchestrator":
+            orch_max_depth = max(settings.orchestrator_max_depth, 1)
+            orch_max_cap = max(settings.orchestrator_max_specialist_invocations, 1)
+            while orch_round_num < orch_max_depth and orch_total_invocations < orch_max_cap:
+                orch_round_num += 1
+                yield _sse_event({"type": "round_start", "round": orch_round_num})
+
+                prior_outputs_for_routing = orch_all_specialist_outputs if orch_round_num > 1 else None
+                routing = await route_turn(
+                    agents=[assignment.agent for assignment in room_agents],
+                    user_input=payload.message,
+                    gateway=llm_gateway,
+                    manager_model_alias=settings.orchestrator_manager_model_alias,
+                    prior_round_outputs=prior_outputs_for_routing,
+                )
+                by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
+                round_assignments = [by_key[k.lower()] for k in routing.selected_agent_keys if k.lower() in by_key]
+                if not round_assignments:
+                    round_assignments = [room_agents[0]]
+
+                remaining = orch_max_cap - orch_total_invocations
+                round_assignments = round_assignments[: min(3, remaining)]
+                if not round_assignments:
+                    break
+
+                round_outputs: list[tuple[_SelectedAgent, str]] = []
+                for assignment in round_assignments:
+                    selected_agent = _room_agent_to_selected_agent(assignment)
+                    streamed_text, succeeded, events = await _stream_agent(selected_agent)
+                    for event in events:
+                        yield event
+                    round_outputs.append((selected_agent, streamed_text))
+                    if succeeded:
+                        orch_all_specialist_outputs.append((selected_agent.name, streamed_text))
+                    orch_total_invocations += 1
+
+                per_round_entries.append(round_outputs)
+                yield _sse_event({"type": "round_end", "round": orch_round_num})
+                if not any(not text.startswith("[[agent_error]]") for _, text in round_outputs):
+                    _LOGGER.info(
+                        "Stopping orchestrator stream loop for session %s: round %d had no successful outputs.",
+                        session.id,
+                        orch_round_num,
+                    )
+                    break
+
+                if orch_round_num < orch_max_depth and orch_total_invocations < orch_max_cap:
+                    eval_decision = await evaluate_orchestrator_round(
+                        gateway=llm_gateway,
+                        manager_model_alias=settings.orchestrator_manager_model_alias,
+                        user_input=payload.message,
+                        all_round_outputs=orch_all_specialist_outputs,
+                        current_round=orch_round_num,
+                    )
+                    if not eval_decision.should_continue:
+                        break
+        else:
+            for selected_agent in selected_agents:
+                streamed_text, _, events = await _stream_agent(selected_agent)
+                for event in events:
+                    yield event
+                per_round_entries.append([(selected_agent, streamed_text)])
 
         if primary_context is None:
             raise HTTPException(status_code=422, detail="No executable agent found for this turn.")
 
         if turn_mode == "orchestrator":
-            specialist_outputs = [
-                (entry_agent.name, entry_content)
-                for entry_agent, entry_content in assistant_entries
-                if not entry_content.startswith("[[agent_error]]")
-            ]
+            specialist_outputs = orch_all_specialist_outputs
             if specialist_outputs:
                 yield _sse_event({"type": "chunk", "delta": "\n\n---\n\nManager synthesis:\n"})
                 try:
@@ -1417,17 +1505,36 @@ async def create_turn_stream(
                 _LOGGER.info("Skipping orchestrator synthesis for session %s: no specialist outputs.", session.id)
 
         model_alias = payload.model_alias_override or (active_agent.model_alias if active_agent else "deepseek")
-        multi_agent_mode = len(selected_agents) > 1
+        model_alias_for_marker = model_alias
+        if turn_mode == "orchestrator" and usage_entries:
+            model_alias_for_marker = usage_entries[0][1]
+        multi_agent_mode = orch_total_invocations > 1 if turn_mode == "orchestrator" else len(selected_agents) > 1
         model_alias_marker = (
             "roundtable"
             if turn_mode == "roundtable"
-            else ("multi-agent" if turn_mode == "orchestrator" and multi_agent_mode else model_alias)
+            else ("multi-agent" if turn_mode == "orchestrator" and multi_agent_mode else model_alias_for_marker)
         )
-        assistant_output_text = (
-            "\n\n".join([f"{entry_agent.name}: {content}" for entry_agent, content in assistant_entries])
-            if multi_agent_mode
-            else (assistant_entries[0][1] if assistant_entries else "")
-        )
+        if turn_mode == "orchestrator" and per_round_entries:
+            if len(per_round_entries) > 1:
+                round_blocks: list[str] = []
+                for round_idx, round_entries in enumerate(per_round_entries, start=1):
+                    lines = [f"[Round {round_idx}]"]
+                    lines.extend(f"{entry_agent.name}: {content}" for entry_agent, content in round_entries)
+                    round_blocks.append("\n".join(lines))
+                assistant_output_text = "\n\n".join(round_blocks)
+            else:
+                single_round = per_round_entries[0]
+                assistant_output_text = (
+                    "\n\n".join(f"{entry_agent.name}: {content}" for entry_agent, content in single_round)
+                    if len(single_round) > 1
+                    else (single_round[0][1] if single_round else "")
+                )
+        else:
+            assistant_output_text = (
+                "\n\n".join([f"{entry_agent.name}: {content}" for entry_agent, content in assistant_entries])
+                if multi_agent_mode
+                else (assistant_entries[0][1] if assistant_entries else "")
+            )
         if manager_synthesis_text:
             synthesis_block = f"Manager synthesis:\n{manager_synthesis_text}"
             assistant_output_text = (

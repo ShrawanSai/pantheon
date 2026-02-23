@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from apps.api.app.db.models import Agent
 from apps.api.app.services.llm.gateway import GatewayMessage, GatewayRequest, GatewayResponse, LlmGateway
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _strip_json_fences(text: str) -> str:
+    """Strip markdown code fences that LLMs often wrap JSON in."""
+    text = text.strip()
+    match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+    if match:
+        return match.group(1)
+    return text
 
 
 @dataclass(frozen=True)
@@ -26,13 +36,25 @@ class _RoutingResponse(BaseModel):
     selected_agent_key: str | None = None
 
 
+class _RoundEvaluationResponse(BaseModel):
+    should_continue: bool = Field(validation_alias="continue")
+
+
 @dataclass(frozen=True)
 class OrchestratorSynthesisResult:
     text: str
     response: GatewayResponse
 
 
-def _build_manager_system_prompt(agents: list[Agent]) -> str:
+@dataclass(frozen=True)
+class OrchestratorRoundDecision:
+    should_continue: bool
+
+
+def _build_manager_system_prompt(
+    agents: list[Agent],
+    prior_round_outputs: list[tuple[str, str]] | None = None,
+) -> str:
     lines = [
         "You are a routing manager for a multi-agent council room.",
         "",
@@ -40,6 +62,14 @@ def _build_manager_system_prompt(agents: list[Agent]) -> str:
     ]
     for agent in agents:
         lines.append(f'- key: "{agent.agent_key}", role: "{agent.role_prompt[:120]}"')
+    if prior_round_outputs:
+        lines.extend(
+            [
+                "",
+                "Prior round specialist outputs (already covered - route for what is still missing):",
+            ]
+        )
+        lines.extend(f"[{name}]: {text}" for name, text in prior_round_outputs)
     lines.extend(
         [
             "",
@@ -104,6 +134,7 @@ async def route_turn(
     user_input: str,
     gateway: LlmGateway,
     manager_model_alias: str,
+    prior_round_outputs: list[tuple[str, str]] | None = None,
 ) -> OrchestratorRoutingDecision:
     if not agents:
         raise ValueError("route_turn requires at least one available agent.")
@@ -113,7 +144,10 @@ async def route_turn(
         GatewayRequest(
             model_alias=manager_model_alias,
             messages=[
-                GatewayMessage(role="system", content=_build_manager_system_prompt(agents)),
+                GatewayMessage(
+                    role="system",
+                    content=_build_manager_system_prompt(agents, prior_round_outputs=prior_round_outputs),
+                ),
                 GatewayMessage(role="user", content=user_input),
             ],
             max_output_tokens=256,
@@ -121,7 +155,7 @@ async def route_turn(
     )
 
     try:
-        parsed = _RoutingResponse.model_validate_json(response.text)
+        parsed = _RoutingResponse.model_validate_json(_strip_json_fences(response.text))
         selected_agent_keys = parsed.selected_agent_keys or (
             [parsed.selected_agent_key] if parsed.selected_agent_key else []
         )
@@ -164,3 +198,49 @@ async def route_turn(
         return fallback
 
     return OrchestratorRoutingDecision(selected_agent_keys=tuple(selected))
+
+
+async def evaluate_orchestrator_round(
+    *,
+    gateway: LlmGateway,
+    manager_model_alias: str,
+    user_input: str,
+    all_round_outputs: list[tuple[str, str]],
+    current_round: int,
+    max_output_tokens: int = 128,
+) -> OrchestratorRoundDecision:
+    specialist_block = "\n\n".join(f"[{name}]: {text}" for name, text in all_round_outputs)
+    response = await gateway.generate(
+        GatewayRequest(
+            model_alias=manager_model_alias,
+            messages=[
+                GatewayMessage(
+                    role="system",
+                    content=(
+                        "You are the orchestrating manager agent. You have seen the user's request and all "
+                        "specialist outputs collected so far. Decide if another specialist round is needed."
+                    ),
+                ),
+                GatewayMessage(role="user", content=user_input),
+                GatewayMessage(role="system", content=f"Specialist outputs so far:\n{specialist_block}"),
+                GatewayMessage(
+                    role="system",
+                    content=(
+                        f"Round {current_round} complete. Should another round of specialist consultation run to "
+                        'better answer the user? Reply ONLY with valid JSON: {"continue": true} or {"continue": false}'
+                    ),
+                ),
+            ],
+            max_output_tokens=max_output_tokens,
+        )
+    )
+    try:
+        parsed_json = _RoundEvaluationResponse.model_validate_json(_strip_json_fences(response.text))
+        return OrchestratorRoundDecision(should_continue=bool(parsed_json.should_continue))
+    except Exception as exc:
+        _LOGGER.warning(
+            "Orchestrator manager returned invalid round evaluation JSON; ending loop. response=%r error=%s",
+            response.text,
+            exc,
+        )
+        return OrchestratorRoundDecision(should_continue=False)

@@ -7,7 +7,14 @@
       "WebFetch(domain:github.com)",
       "Bash(.\\\\.venv\\\\Scripts\\\\python.exe -m pytest:*)",
       "Bash(.venv/Scripts/python.exe -m pytest:*)",
-      "Bash(.venv/Scripts/python.exe -m ruff check:*)"
+      "Bash(.venv/Scripts/python.exe -m ruff check:*)",
+      "Bash(curl:*)",
+      "Bash(pip show:*)",
+      "Bash(python -c:*)",
+      "Bash(python scripts/simulate_e2e.py:*)",
+      "Bash(python -m scripts.simulate_e2e:*)",
+      "Bash(PYTHONIOENCODING=utf-8 python:*)",
+      "Bash(python -m pytest:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
