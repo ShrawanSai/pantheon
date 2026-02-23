@@ -39,6 +39,11 @@ class WalletService:
         await db.flush()
         return wallet
 
+    # initiated_by convention:
+    # - Debits leave initiated_by=None for system-driven turns.
+    # - user_id identifies the account and reference_id carries turn context.
+    # - Any future admin-forced debit path must explicitly pass initiated_by=admin_user_id.
+    # - Do not backfill historical debit rows.
     async def stage_debit(
         self,
         db: AsyncSession,

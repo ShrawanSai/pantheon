@@ -557,6 +557,26 @@ class SessionTurnRoutesTests(unittest.TestCase):
         )
         self.assertEqual(turn_response.status_code, 201)
 
+    def test_turn_response_summary_fallback_is_false_when_no_summary(self) -> None:
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="No Summary Fallback Room",
+        )
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek")
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        turn_response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "No summary expected for this short turn."},
+        )
+        self.assertEqual(turn_response.status_code, 201)
+        body = turn_response.json()
+        self.assertIn("summary_used_fallback", body)
+        self.assertFalse(body["summary_used_fallback"])
+
     def test_create_second_turn_increments_turn_index_and_message_count(self) -> None:
         self.fake_gateway.calls.clear()
         self.fake_manager_gateway.calls.clear()
@@ -745,6 +765,9 @@ class SessionTurnRoutesTests(unittest.TestCase):
             self.assertEqual(json.loads(event.tool_output_json)["result_count"], 1)
         finally:
             app.dependency_overrides[get_mode_executor] = lambda: self.fake_mode_executor
+
+    def test_tool_call_event_room_id_column_uses_64_length(self) -> None:
+        self.assertEqual(ToolCallEvent.__table__.c.room_id.type.length, 64)
 
     def test_manual_mode_dispatches_only_tagged_agent(self) -> None:
         self.fake_gateway.calls.clear()

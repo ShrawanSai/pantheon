@@ -12,16 +12,24 @@ from apps.api.app.db.models import CreditTransaction, CreditWallet, LlmCallEvent
 from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.auth import get_current_user
 from apps.api.app.schemas.admin import (
+    AdminEnforcementRead,
+    AdminEnforcementUpdate,
     AdminGrantRequest,
     AdminGrantResponse,
     AdminPricingListRead,
     AdminPricingRead,
+    AdminSettingsRead,
     AdminPricingUpdate,
     AdminTransactionRead,
+    AdminUsageBucket,
     AdminUsageBreakdownItem,
-    AdminUsageDailyBucket,
     AdminUsageSummaryRead,
     AdminWalletRead,
+)
+from apps.api.app.services.billing.enforcement import (
+    get_enforcement_enabled,
+    get_enforcement_source,
+    set_enforcement_override,
 )
 from apps.api.app.services.billing.wallet import WalletService, get_wallet_service
 from apps.api.app.services.billing.pricing_admin import (
@@ -128,19 +136,41 @@ async def get_usage_summary(
     breakdown_query = breakdown_query.group_by(LlmCallEvent.model_alias).order_by(LlmCallEvent.model_alias.asc())
     breakdown_rows = (await db.execute(breakdown_query)).all()
 
-    daily_rows: list[tuple[date, int, Decimal]] = []
-    if bucket == "day":
+    daily_rows: list[tuple[object, int, Decimal]] = []
+    if bucket in {"day", "week", "month"}:
+        dialect = db.bind.dialect.name if db.bind is not None else ""
+        if bucket == "day":
+            bucket_expr = func.date(LlmCallEvent.created_at)
+        elif bucket == "week":
+            if dialect == "sqlite":
+                # Monday start-of-week date for SQLite test dialect.
+                bucket_expr = func.date(
+                    LlmCallEvent.created_at,
+                    func.printf("-%d days", (func.strftime("%w", LlmCallEvent.created_at) + 6) % 7),
+                )
+            else:
+                bucket_expr = func.date(func.date_trunc("week", LlmCallEvent.created_at))
+        else:
+            if dialect == "sqlite":
+                bucket_expr = func.date(LlmCallEvent.created_at, "start of month")
+            else:
+                bucket_expr = func.date(func.date_trunc("month", LlmCallEvent.created_at))
+
         daily_query = select(
-            func.date(LlmCallEvent.created_at),
+            bucket_expr,
             func.count(LlmCallEvent.id),
             func.coalesce(func.sum(LlmCallEvent.credits_burned), 0),
         )
         if conditions:
             daily_query = daily_query.where(*conditions)
-        daily_query = daily_query.group_by(func.date(LlmCallEvent.created_at)).order_by(
-            func.date(LlmCallEvent.created_at).asc()
-        )
+        daily_query = daily_query.group_by(bucket_expr).order_by(bucket_expr.asc())
         daily_rows = (await db.execute(daily_query)).all()
+
+    def _bucket_to_date(value: object) -> date:
+        if isinstance(value, date):
+            return value
+        parsed = str(value)[:10]
+        return date.fromisoformat(parsed)
 
     return AdminUsageSummaryRead(
         total_credits_burned=format_decimal(total_credits),
@@ -157,13 +187,51 @@ async def get_usage_summary(
             for row in breakdown_rows
         ],
         daily=[
-            AdminUsageDailyBucket(
-                date=row[0],
+            AdminUsageBucket(
+                date=_bucket_to_date(row[0]),
                 call_count=int(row[1]),
                 credits_burned=format_decimal(Decimal(str(row[2]))),
             )
             for row in daily_rows
         ],
+    )
+
+
+@router.get("/settings", response_model=AdminSettingsRead)
+async def get_admin_settings(
+    _: dict[str, str] = Depends(require_admin),
+    settings: Settings = Depends(get_settings),
+) -> AdminSettingsRead:
+    return AdminSettingsRead(
+        enforcement_enabled=get_enforcement_enabled(settings.credit_enforcement_enabled),
+        enforcement_source=get_enforcement_source(),
+        low_balance_threshold=settings.low_balance_threshold,
+        pricing_version=settings.pricing_version,
+    )
+
+
+@router.patch("/settings/enforcement", response_model=AdminEnforcementRead)
+async def patch_enforcement_setting(
+    payload: AdminEnforcementUpdate,
+    _: dict[str, str] = Depends(require_admin),
+    settings: Settings = Depends(get_settings),
+) -> AdminEnforcementRead:
+    set_enforcement_override(payload.enabled)
+    return AdminEnforcementRead(
+        enforcement_enabled=get_enforcement_enabled(settings.credit_enforcement_enabled),
+        source=get_enforcement_source(),
+    )
+
+
+@router.delete("/settings/enforcement", response_model=AdminEnforcementRead)
+async def clear_enforcement_setting(
+    _: dict[str, str] = Depends(require_admin),
+    settings: Settings = Depends(get_settings),
+) -> AdminEnforcementRead:
+    set_enforcement_override(None)
+    return AdminEnforcementRead(
+        enforcement_enabled=get_enforcement_enabled(settings.credit_enforcement_enabled),
+        source=get_enforcement_source(),
     )
 
 
