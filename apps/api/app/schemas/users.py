@@ -34,6 +34,7 @@ class TransactionRead(BaseModel):
     id: str
     kind: str
     amount: str
+    initiated_by: str | None
     note: str | None
     reference_id: str | None
     created_at: datetime

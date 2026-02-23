@@ -31,6 +31,7 @@ class Settings:
     supabase_storage_bucket: str
     admin_user_ids: tuple[str, ...]
     low_balance_threshold: float
+    credit_enforcement_enabled: bool
 
 
 def _int_env(name: str, default: int) -> int:
@@ -51,6 +52,13 @@ def _float_env(name: str, default: float) -> float:
         return float(raw)
     except ValueError as exc:
         raise RuntimeError(f"{name} must be a float.") from exc
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes")
 
 
 @lru_cache(maxsize=1)
@@ -87,4 +95,5 @@ def get_settings() -> Settings:
         supabase_storage_bucket=os.getenv("SUPABASE_STORAGE_BUCKET", "pantheon-files"),
         admin_user_ids=admin_user_ids,
         low_balance_threshold=_float_env("LOW_BALANCE_THRESHOLD", 5.0),
+        credit_enforcement_enabled=_bool_env("CREDIT_ENFORCEMENT_ENABLED", False),
     )
