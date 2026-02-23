@@ -14,7 +14,17 @@
       "Bash(python scripts/simulate_e2e.py:*)",
       "Bash(python -m scripts.simulate_e2e:*)",
       "Bash(PYTHONIOENCODING=utf-8 python:*)",
-      "Bash(python -m pytest:*)"
+      "Bash(python -m pytest:*)",
+      "Bash(node -e:*)",
+      "Bash(npm install:*)",
+      "Bash(npx playwright:*)",
+      "Bash(npm root:*)",
+      "Bash(pkill:*)",
+      "Bash(for port in 3001 3002 3003 3004 3005)",
+      "Bash(do)",
+      "Bash(echo:*)",
+      "Bash(break)",
+      "Bash(done)"
     ]
   },
   "enableAllProjectMcpServers": true,
