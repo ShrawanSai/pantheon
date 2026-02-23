@@ -17,6 +17,15 @@ function getApiBase(): string {
   return process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 }
 
+function getApiTimeoutMs(): number {
+  const raw = process.env.NEXT_PUBLIC_API_TIMEOUT_MS;
+  const parsed = raw ? Number(raw) : NaN;
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return 15_000;
+}
+
 async function redirectToLogin() {
   const supabase = getSupabaseBrowserClient();
   await supabase.auth.signOut();
@@ -35,10 +44,23 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     headers.set("Authorization", `Bearer ${session.access_token}`);
   }
 
-  const response = await fetch(`${getApiBase()}${path}`, {
-    ...init,
-    headers
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), getApiTimeoutMs());
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBase()}${path}`, {
+      ...init,
+      headers,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new ApiError(504, "Request timed out. Please retry.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     let detail = response.statusText || "Request failed";
@@ -46,11 +68,16 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       const payload = await response.json();
       if (typeof payload?.detail === "string") {
         detail = payload.detail;
+      } else if (typeof payload?.message === "string") {
+        detail = payload.message;
       } else if (payload?.detail && typeof payload.detail === "object") {
         detail = payload.detail.detail || detail;
       }
     } catch {
-      // keep default detail
+      const fallback = await response.text().catch(() => "");
+      if (fallback.trim()) {
+        detail = fallback;
+      }
     }
 
     if (response.status === 401) {

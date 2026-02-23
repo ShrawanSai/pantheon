@@ -144,7 +144,11 @@ export default function RoomsPage() {
       {actionMessage ? <p className="mb-3 text-sm text-[--text-muted]">{actionMessage}</p> : null}
       {roomsQuery.isError ? (
         <p className="mb-3 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
-          {(roomsQuery.error as ApiError).detail || "Failed to load rooms."}
+          {roomsQuery.error instanceof ApiError
+            ? roomsQuery.error.detail
+            : roomsQuery.error instanceof Error
+              ? roomsQuery.error.message
+              : "Failed to load rooms."}
         </p>
       ) : null}
 

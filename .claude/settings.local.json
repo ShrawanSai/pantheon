@@ -24,7 +24,8 @@
       "Bash(do)",
       "Bash(echo:*)",
       "Bash(break)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(ls:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

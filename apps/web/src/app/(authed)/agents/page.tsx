@@ -160,7 +160,11 @@ export default function AgentsPage() {
       {actionMessage ? <p className="mb-3 text-sm text-[--text-muted]">{actionMessage}</p> : null}
       {agentsQuery.isError ? (
         <p className="mb-3 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
-          {(agentsQuery.error as ApiError).detail || "Failed to load agents."}
+          {agentsQuery.error instanceof ApiError
+            ? agentsQuery.error.detail
+            : agentsQuery.error instanceof Error
+              ? agentsQuery.error.message
+              : "Failed to load agents."}
         </p>
       ) : null}
 
