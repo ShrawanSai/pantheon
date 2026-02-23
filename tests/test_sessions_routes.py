@@ -55,7 +55,10 @@ from apps.api.app.services.orchestration.mode_executor import (
     TurnExecutionOutput,
     get_mode_executor,
 )
-from apps.api.app.services.orchestration.orchestrator_manager import OrchestratorRoutingDecision
+from apps.api.app.services.orchestration.orchestrator_manager import (
+    OrchestratorRoundDecision,
+    OrchestratorRoutingDecision,
+)
 from apps.api.app.services.usage.recorder import UsageRecord, get_usage_recorder
 
 
@@ -1749,11 +1752,318 @@ class SessionTurnRoutesTests(unittest.TestCase):
         finally:
             app.dependency_overrides[get_mode_executor] = lambda: self.fake_mode_executor
 
+    def test_orchestrator_single_round_manager_done(self) -> None:
+        self.fake_gateway.calls.clear()
+        self.fake_manager_gateway.calls.clear()
+        self.fake_manager_gateway.response_text = "Single round synthesis."
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Orchestrator Single Round Room",
+            current_mode="orchestrator",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen", position=1)
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek", position=2)
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        async def route_once(*args, **kwargs) -> OrchestratorRoutingDecision:
+            _ = args
+            _ = kwargs
+            return OrchestratorRoutingDecision(selected_agent_keys=("writer",))
+
+        with (
+            patch("apps.api.app.api.v1.routes.sessions.route_turn", side_effect=route_once) as route_mock,
+            patch(
+                "apps.api.app.api.v1.routes.sessions.evaluate_orchestrator_round",
+                return_value=OrchestratorRoundDecision(should_continue=False),
+            ) as eval_mock,
+        ):
+            response = self.client.post(
+                f"/api/v1/sessions/{session_id}/turns",
+                json={"message": "Single round please."},
+            )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertIn("Manager synthesis:", body["assistant_output"])
+        self.assertEqual(route_mock.call_count, 1)
+        self.assertEqual(eval_mock.call_count, 1)
+        self.assertEqual([call.model_alias for call in self.fake_gateway.calls], ["qwen"])
+
+    def test_orchestrator_two_rounds_then_done(self) -> None:
+        self.fake_gateway.calls.clear()
+        self.fake_manager_gateway.calls.clear()
+        self.fake_manager_gateway.response_text = "Two round synthesis."
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Orchestrator Two Rounds Room",
+            current_mode="orchestrator",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen", position=1)
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek", position=2)
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        route_side_effect = [
+            OrchestratorRoutingDecision(selected_agent_keys=("writer",)),
+            OrchestratorRoutingDecision(selected_agent_keys=("researcher",)),
+        ]
+        eval_side_effect = [
+            OrchestratorRoundDecision(should_continue=True),
+            OrchestratorRoundDecision(should_continue=False),
+        ]
+        with (
+            patch("apps.api.app.api.v1.routes.sessions.route_turn", side_effect=route_side_effect) as route_mock,
+            patch(
+                "apps.api.app.api.v1.routes.sessions.evaluate_orchestrator_round",
+                side_effect=eval_side_effect,
+            ) as eval_mock,
+        ):
+            response = self.client.post(
+                f"/api/v1/sessions/{session_id}/turns",
+                json={"message": "Do two rounds."},
+            )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertIn("[Round 1]", body["assistant_output"])
+        self.assertIn("[Round 2]", body["assistant_output"])
+        self.assertEqual(route_mock.call_count, 2)
+        self.assertEqual(eval_mock.call_count, 2)
+        self.assertEqual([call.model_alias for call in self.fake_gateway.calls], ["qwen", "deepseek"])
+
+    def test_orchestrator_depth_cap_stops_loop(self) -> None:
+        os.environ["ORCHESTRATOR_MAX_DEPTH"] = "3"
+        get_settings.cache_clear()
+        self.addCleanup(lambda: (os.environ.pop("ORCHESTRATOR_MAX_DEPTH", None), get_settings.cache_clear()))
+
+        self.fake_gateway.calls.clear()
+        self.fake_manager_gateway.calls.clear()
+        self.fake_manager_gateway.response_text = "Depth cap synthesis."
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Orchestrator Depth Cap Room",
+            current_mode="orchestrator",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen", position=1)
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        with (
+            patch(
+                "apps.api.app.api.v1.routes.sessions.route_turn",
+                return_value=OrchestratorRoutingDecision(selected_agent_keys=("writer",)),
+            ) as route_mock,
+            patch(
+                "apps.api.app.api.v1.routes.sessions.evaluate_orchestrator_round",
+                return_value=OrchestratorRoundDecision(should_continue=True),
+            ) as eval_mock,
+        ):
+            response = self.client.post(
+                f"/api/v1/sessions/{session_id}/turns",
+                json={"message": "Continue until cap."},
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertIn("[Round 3]", response.json()["assistant_output"])
+        self.assertEqual(route_mock.call_count, 3)
+        self.assertEqual(eval_mock.call_count, 2)
+        self.assertEqual(len(self.fake_gateway.calls), 3)
+
+    def test_orchestrator_specialist_invocation_cap(self) -> None:
+        os.environ["ORCHESTRATOR_MAX_SPECIALIST_INVOCATIONS"] = "2"
+        get_settings.cache_clear()
+        self.addCleanup(
+            lambda: (os.environ.pop("ORCHESTRATOR_MAX_SPECIALIST_INVOCATIONS", None), get_settings.cache_clear())
+        )
+
+        self.fake_gateway.calls.clear()
+        self.fake_manager_gateway.calls.clear()
+        self.fake_manager_gateway.response_text = "Invocation cap synthesis."
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Orchestrator Invocation Cap Room",
+            current_mode="orchestrator",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen", position=1)
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek", position=2)
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        with patch(
+            "apps.api.app.api.v1.routes.sessions.route_turn",
+            return_value=OrchestratorRoutingDecision(selected_agent_keys=("writer", "researcher")),
+        ) as route_mock:
+            response = self.client.post(
+                f"/api/v1/sessions/{session_id}/turns",
+                json={"message": "Hit invocation cap."},
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(route_mock.call_count, 1)
+        self.assertEqual(len(self.fake_gateway.calls), 2)
+
+    def test_orchestrator_prior_outputs_fed_to_round2_routing(self) -> None:
+        self.fake_gateway.calls.clear()
+        self.fake_manager_gateway.calls.clear()
+        self.fake_manager_gateway.response_text = "Prior outputs synthesis."
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Orchestrator Prior Outputs Room",
+            current_mode="orchestrator",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen", position=1)
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek", position=2)
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        seen_prior_outputs: list[list[tuple[str, str]] | None] = []
+
+        async def route_spy(*args, **kwargs) -> OrchestratorRoutingDecision:
+            seen_prior_outputs.append(kwargs.get("prior_round_outputs"))
+            if len(seen_prior_outputs) == 1:
+                return OrchestratorRoutingDecision(selected_agent_keys=("writer",))
+            return OrchestratorRoutingDecision(selected_agent_keys=("researcher",))
+
+        with (
+            patch("apps.api.app.api.v1.routes.sessions.route_turn", side_effect=route_spy),
+            patch(
+                "apps.api.app.api.v1.routes.sessions.evaluate_orchestrator_round",
+                side_effect=[
+                    OrchestratorRoundDecision(should_continue=True),
+                    OrchestratorRoundDecision(should_continue=False),
+                ],
+            ),
+        ):
+            response = self.client.post(
+                f"/api/v1/sessions/{session_id}/turns",
+                json={"message": "Track prior outputs."},
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(seen_prior_outputs), 2)
+        self.assertIsNone(seen_prior_outputs[0])
+        self.assertIsNotNone(seen_prior_outputs[1])
+        assert seen_prior_outputs[1] is not None
+        self.assertGreaterEqual(len(seen_prior_outputs[1]), 1)
+        self.assertEqual(seen_prior_outputs[1][0][0], "Writer")
+
+    def test_orchestrator_streaming_emits_round_events(self) -> None:
+        self.fake_manager_gateway.stream_calls.clear()
+        self.fake_manager_gateway.calls.clear()
+        self.fake_manager_gateway.response_text = "Stream round synthesis."
+        self.fake_manager_gateway.stream_chunks = ["S", "tream"]
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Orchestrator Round Events Stream Room",
+            current_mode="orchestrator",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen", position=1)
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek", position=2)
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        with (
+            patch(
+                "apps.api.app.api.v1.routes.sessions.route_turn",
+                side_effect=[
+                    OrchestratorRoutingDecision(selected_agent_keys=("writer",)),
+                    OrchestratorRoutingDecision(selected_agent_keys=("researcher",)),
+                ],
+            ),
+            patch(
+                "apps.api.app.api.v1.routes.sessions.evaluate_orchestrator_round",
+                side_effect=[
+                    OrchestratorRoundDecision(should_continue=True),
+                    OrchestratorRoundDecision(should_continue=False),
+                ],
+            ),
+        ):
+            with self.client.stream(
+                "POST",
+                f"/api/v1/sessions/{session_id}/turns/stream",
+                json={"message": "Emit round events."},
+            ) as response:
+                self.assertEqual(response.status_code, 200)
+                body = "".join(response.iter_text())
+
+        events = self._collect_sse_events(body)
+        self.assertIn({"type": "round_start", "round": 1}, events)
+        self.assertIn({"type": "round_end", "round": 1}, events)
+
+    def test_orchestrator_synthesis_aggregates_all_rounds(self) -> None:
+        self.fake_gateway.calls.clear()
+        self.fake_manager_gateway.calls.clear()
+        self.fake_manager_gateway.response_text = "Writer and Researcher combined."
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Orchestrator Aggregate Synthesis Room",
+            current_mode="orchestrator",
+        )
+        self._seed_agent(room_id=room_id, agent_key="writer", model_alias="qwen", position=1)
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek", position=2)
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        with (
+            patch(
+                "apps.api.app.api.v1.routes.sessions.route_turn",
+                side_effect=[
+                    OrchestratorRoutingDecision(selected_agent_keys=("writer",)),
+                    OrchestratorRoutingDecision(selected_agent_keys=("researcher",)),
+                ],
+            ),
+            patch(
+                "apps.api.app.api.v1.routes.sessions.evaluate_orchestrator_round",
+                side_effect=[
+                    OrchestratorRoundDecision(should_continue=True),
+                    OrchestratorRoundDecision(should_continue=False),
+                ],
+            ),
+        ):
+            turn_response = self.client.post(
+                f"/api/v1/sessions/{session_id}/turns",
+                json={"message": "Aggregate all rounds."},
+            )
+        self.assertEqual(turn_response.status_code, 201)
+        turn_id = turn_response.json()["id"]
+
+        async def fetch_manager_message() -> Message | None:
+            async with self.session_factory() as session:
+                return await session.scalar(
+                    select(Message).where(
+                        Message.turn_id == turn_id,
+                        Message.source_agent_key == "manager",
+                        Message.role == "assistant",
+                    )
+                )
+
+        manager_message = asyncio.run(fetch_manager_message())
+        self.assertIsNotNone(manager_message)
+        assert manager_message is not None
+        self.assertIn("Writer", manager_message.content)
+        self.assertIn("Researcher", manager_message.content)
+
     def test_orchestrator_turn_calls_route_turn_then_specialists_and_synthesis(self) -> None:
         self.fake_gateway.calls.clear()
         self.fake_manager_gateway.calls.clear()
         self.fake_manager_gateway.response_texts = [
             '{"selected_agent_keys":["writer","researcher"]}',
+            '{"continue": false}',
             "Synthesized manager output.",
         ]
         room_id = self._seed_room(
@@ -1774,14 +2084,15 @@ class SessionTurnRoutesTests(unittest.TestCase):
         )
         self.assertEqual(turn_response.status_code, 201)
         self.assertEqual(len(self.fake_gateway.calls), 2)
-        self.assertEqual(len(self.fake_manager_gateway.calls), 2)
-        self.assertEqual(len(self.fake_gateway.calls) + len(self.fake_manager_gateway.calls), 4)
+        self.assertEqual(len(self.fake_manager_gateway.calls), 3)
+        self.assertEqual(len(self.fake_gateway.calls) + len(self.fake_manager_gateway.calls), 5)
 
     def test_orchestrator_synthesis_message_persisted(self) -> None:
         self.fake_gateway.calls.clear()
         self.fake_manager_gateway.calls.clear()
         self.fake_manager_gateway.response_texts = [
             '{"selected_agent_key":"writer"}',
+            '{"continue": false}',
             "Manager synthesis text.",
         ]
         room_id = self._seed_room(
@@ -1823,6 +2134,7 @@ class SessionTurnRoutesTests(unittest.TestCase):
         self.fake_manager_gateway.calls.clear()
         self.fake_manager_gateway.response_texts = [
             '{"selected_agent_key":"writer"}',
+            '{"continue": false}',
             "Consolidated answer.",
         ]
         room_id = self._seed_room(

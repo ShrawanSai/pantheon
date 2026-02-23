@@ -17,6 +17,7 @@ class LlmSpec:
 
 
 SUPPORTED_LLMS: dict[str, LlmSpec] = {
+    "free": LlmSpec(alias="free", model_id="mistralai/mistral-small-3.1-24b-instruct:free", tier="free"),
     "llama": LlmSpec(alias="llama", model_id="meta-llama/llama-4-scout", tier="economy"),
     "qwen": LlmSpec(
         alias="qwen",

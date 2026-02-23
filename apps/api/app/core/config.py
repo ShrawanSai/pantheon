@@ -40,6 +40,8 @@ class Settings:
     credits_per_usd: float
     rate_limit_turns_per_minute: int
     rate_limit_turns_per_hour: int
+    orchestrator_max_depth: int
+    orchestrator_max_specialist_invocations: int
 
 
 def _int_env(name: str, default: int) -> int:
@@ -112,4 +114,6 @@ def get_settings() -> Settings:
         credits_per_usd=_float_env("CREDITS_PER_USD", 1.0 / 0.03),
         rate_limit_turns_per_minute=_int_env("RATE_LIMIT_TURNS_PER_MINUTE", 10),
         rate_limit_turns_per_hour=_int_env("RATE_LIMIT_TURNS_PER_HOUR", 60),
+        orchestrator_max_depth=_int_env("ORCHESTRATOR_MAX_DEPTH", 3),
+        orchestrator_max_specialist_invocations=_int_env("ORCHESTRATOR_MAX_SPECIALIST_INVOCATIONS", 12),
     )
