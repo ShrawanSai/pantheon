@@ -1,7 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { ReactNode } from "react";
+import { AppProviders } from "@/components/providers/app-providers";
 
 export const metadata: Metadata = {
   title: "Pantheon Web",
@@ -10,21 +10,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        <div className="shell">
-          <header className="topbar">
-            <strong>Pantheon</strong>
-            <nav>
-              <Link href="/">Home</Link>
-              <Link href="/auth/login">Login</Link>
-              <Link href="/auth/callback">Auth Callback</Link>
-            </nav>
-          </header>
-          <main className="main">{children}</main>
-        </div>
+    <html lang="en" className="dark">
+      <body className="bg-[--bg-base] text-[--text-primary] antialiased">
+        <AppProviders>{children}</AppProviders>
       </body>
     </html>
   );
 }
-

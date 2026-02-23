@@ -1,705 +1,408 @@
-# Pantheon Frontend Plan
+# Pantheon Frontend Plan (Authoritative)
 
-Version: 1.0
+Version: 2.0
 Date: 2026-02-23
 Status: Approved for implementation
 
----
-
-## 1. Current State
-
-The frontend scaffold exists at `apps/web/` with:
-- Next.js 15 App Router, TypeScript
-- Only pages: `/` (connectivity check), `/auth/login`, `/auth/callback`
-- No real UI, no component library, no state management, no API layer
-
-Everything described below is greenfield.
-
----
-
-## 2. Tech Stack (Locked)
-
-| Concern | Choice | Reason |
-|---|---|---|
-| Framework | Next.js 15 App Router | Already in repo |
-| Language | TypeScript (strict) | Already in repo |
-| Styling | Tailwind CSS v3 | Fast, consistent, no CSS files to manage |
-| Component library | shadcn/ui | Radix UI primitives + Tailwind, unstyled by default, easy to own |
-| Icons | lucide-react | Ships with shadcn/ui, consistent set |
-| State (server) | TanStack Query v5 | Cache, pagination, refetch, optimistic updates |
-| State (client) | Zustand | Lightweight, no boilerplate, good for UI state |
-| Auth | @supabase/ssr | First-party Next.js App Router support, handles cookies |
-| Streaming | Native `fetch` + `ReadableStream` | SSE-compatible, no library needed |
-| Forms | React Hook Form + Zod | Validation consistency, matches backend Pydantic contracts |
-| Markdown | react-markdown + remark-gfm | Agent outputs often include markdown |
-
----
-
-## 3. Design Principles
-
-1. **Familiar over clever.** Users should feel at home immediately. Reference: ChatGPT layout, Slack sidebar structure.
-2. **Dark-first.** Dark background (`zinc-900`/`zinc-950`), light text. Match what users expect from AI tools.
-3. **Streaming is the UX.** Agent responses should appear token by token. No "loading spinner then dump". Every agent gets its own bubble that fills in live.
-4. **Transparency is a feature.** Multi-agent outputs are separate bubbles with agent name + model label. Credits per turn are always visible. This is Pantheon's differentiator — do not collapse or hide it.
-5. **Mode is always visible.** The current active mode (Manual / Roundtable / Orchestrator) must be displayed in the input bar at all times. Mode changes apply on next send — communicate this clearly.
-6. **Mobile is a first-class citizen.** The 3-panel desktop layout collapses to a tab-based single-panel view on mobile.
-
----
-
-## 4. Color and Typography
-
-### Palette
-```
-Background:     zinc-950  (#09090b)
-Surface:        zinc-900  (#18181b)
-Surface-raised: zinc-800  (#27272a)
-Border:         zinc-700  (#3f3f46)
-Text-primary:   zinc-50   (#fafafa)
-Text-muted:     zinc-400  (#a1a1aa)
-Accent:         violet-500 (#8b5cf6)  — primary actions, active states
-Success:        emerald-500
-Warning:        amber-500
-Error:          red-500
-```
-
-### Agent color coding (per position in room, cycles)
-```
-Position 1: sky-400
-Position 2: violet-400
-Position 3: emerald-400
-Position 4: amber-400
-Manager:    zinc-300 (neutral — the orchestrator)
-```
-
-### Typography
-- Font: `Inter` (Google Fonts, already standard for SaaS)
-- Base: 14px / 1.5 line height
-- Code/preformatted: `JetBrains Mono`
-
----
-
-## 5. Application Routes
-
-```
-/                         → redirect to /rooms (if authed) or /auth/login
-/auth/login               → magic link entry (already exists)
-/auth/callback            → Supabase callback handler (already exists)
-
-/rooms                    → Home dashboard (room list + quick-start templates)
-/rooms/new                → Create room flow
-/rooms/[roomId]           → Room workspace (the main chat screen)
-/rooms/[roomId]/settings  → Edit room name, goal, mode default, agents
-
-/agents                   → Agent library (all user's agents)
-/agents/new               → Create agent
-/agents/[agentId]/edit    → Edit agent
-
-/billing                  → Wallet balance, usage breakdown, transaction history, top-up
-
-/admin                    → Admin dashboard (guard: admin role required)
-/admin/users              → User list with cap/suspend controls
-/admin/analytics          → Usage + active-user charts
-/admin/pricing            → Model multiplier editor
-```
-
----
-
-## 6. Layout Structure
-
-### 6.1 Root Layout (all authed pages)
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ Sidebar (240px, collapsible)  │  Page Content             │
-│                               │                           │
-│  [Pantheon logo]              │                           │
-│                               │                           │
-│  + New Room                   │                           │
-│                               │                           │
-│  ROOMS                        │                           │
-│  > Weekly Memo                │                           │
-│  > Contract Review            │                           │
-│  > Research Digest            │                           │
-│                               │                           │
-│  ────                         │                           │
-│  Agents                       │                           │
-│  Billing                      │                           │
-│  ────                         │                           │
-│  [Avatar] user@email   [⚙]   │                           │
-│  120 / 495 cr          [≡]   │                           │
-└─────────────────────────────────────────────────────────┘
-```
-
-The sidebar is always visible on desktop (≥1024px). Below 1024px it becomes a slide-over drawer triggered by a hamburger button in the topbar.
-
-### 6.2 Room Workspace Layout (3-panel, desktop)
-
-```
-┌──────────────┬───────────────────────────────┬──────────────┐
-│ Left Panel   │ Conversation Timeline          │ Right Panel  │
-│ (240px)      │ (flex-1)                       │ (280px)      │
-│              │                                │              │
-│ Room name    │ [scrollable message list]      │ Tool Activity│
-│ Mode badge   │                                │ Files        │
-│              │                                │ Usage        │
-│ Agents       │                                │              │
-│ (roster)     │                                │              │
-│              │                                │              │
-│              ├────────────────────────────────┤              │
-│              │ ChatInput (sticky bottom)      │              │
-└──────────────┴────────────────────────────────┴──────────────┘
-```
-
-Right panel is collapsible (toggle button). On screens 1024–1280px, right panel hides by default.
-
-### 6.3 Mobile Layout (< 768px)
-
-```
-┌──────────────────────────┐
-│ Topbar: [≡] Room Name    │
-├──────────────────────────┤
-│                          │
-│ Conversation Timeline    │
-│                          │
-├──────────────────────────┤
-│ [Chat] [Tools] [Files]   │  ← tab bar
-├──────────────────────────┤
-│ ChatInput                │
-└──────────────────────────┘
-```
-
----
-
-## 7. Key Components
-
-### 7.1 ChatInput
-
-The single most important component.
-
-```
-┌────────────────────────────────────────────────────────┐
-│ [Mode: Orchestrator ▾]  [@tag...]  [📎]                │
-│ ┌──────────────────────────────────────────────────┐   │
-│ │ Ask anything...                                  │   │
-│ └──────────────────────────────────────────────────┘   │
-│                                          [Send ↵]       │
-└────────────────────────────────────────────────────────┘
-```
-
-- **Mode selector**: dropdown showing Manual / Roundtable / Orchestrator. Shows current effective mode. If pending mode differs, show `"Orchestrator (applies on next send)"` tooltip.
-- **@tag input** (Manual mode only): autocompletes to agent names in the room roster. Shows chips for selected agents.
-- **File attach**: opens file picker (PDF/DOCX/TXT/MD/CSV). Shows attached file chips below textarea.
-- **Textarea**: auto-resizes. `Shift+Enter` = newline, `Enter` = send.
-- **Send button**: disabled during in-flight turn. Shows spinner.
-
-### 7.2 AgentBubble
-
-Each agent response is a distinct bubble — never merged.
-
-```
-┌──────────────────────────────────────────────────────┐
-│ [●] Researcher · DeepSeek          2.1s  1.12 cr  [↗]│
-│                                                      │
-│  Here are the key findings from the document...      │
-│  ▌ (cursor while streaming)                          │
-└──────────────────────────────────────────────────────┘
-```
-
-- Colored dot = agent color (by position)
-- Agent name + model alias always visible
-- Latency + credits shown after completion (hidden during streaming)
-- `[↗]` expands to Turn Details Drawer
-- Streaming: text appends token by token. Cursor blinks. No layout shift.
-
-### 7.3 OrchestratorRoundBadge
-
-When orchestrator multi-round is active, show round boundaries:
-
-```
-─────────── Round 2 of 3 ───────────
-```
-
-Rendered as a centered muted divider between round groups.
-
-### 7.4 ManagerSynthesisBubble
-
-Final synthesis from manager (orchestrator mode):
-
-```
-┌──────────────────────────────────────────────────────┐
-│ [◆] Manager Synthesis                     0.3 cr  [↗]│
-│                                                      │
-│  Based on the specialist outputs...                  │
-└──────────────────────────────────────────────────────┘
-```
-
-Diamond icon, `zinc-300` color to distinguish from specialists.
-
-### 7.5 TurnDetailsDrawer
-
-Slide-over from the right, triggered by `[↗]` on any bubble.
-
-```
-Turn #12 · Orchestrator
-
-Step 1  Researcher (DeepSeek)      ✓  2.1s
-  Prompt: 1,120  Output: 340  Cached: 900  Credits: 1.12
-
-Step 2  Writer (GPT-OSS)           ✓  3.3s
-  Prompt: 1,870  Output: 420  Cached: 1,020  Credits: 1.74
-
-Tool Calls: search ×2, fetch ×1   Tool Credits: 0.80
-Total: 4.60 credits
-```
-
-### 7.6 ModeChangeBanner
-
-When the user changes mode, show a non-intrusive inline banner in the timeline:
-
-```
-  ── Mode changed to Orchestrator · applies on next send ──
-```
-
-This is a system message in the timeline, not a toast.
-
-### 7.7 StreamingIndicator
-
-Per-agent "thinking" state while waiting for first token:
-
-```
-[●] Researcher · DeepSeek
-   ···  (three dots pulsing)
-```
-
-Appears immediately when step starts, before first token arrives.
-
----
-
-## 8. API Layer
-
-### Structure
-
-```
-apps/web/src/
-  lib/
-    api/
-      client.ts        ← base fetch wrapper (auth headers, error parsing)
-      agents.ts
-      rooms.ts
-      sessions.ts
-      turns.ts
-      files.ts
-      users.ts
-      admin.ts
-    hooks/
-      useRooms.ts
-      useRoom.ts
-      useAgents.ts
-      useSession.ts
-      useSendTurn.ts       ← non-streaming
-      useStreamTurn.ts     ← SSE streaming
-      useWallet.ts
-      useAdminAnalytics.ts
-    stores/
-      uiStore.ts           ← Zustand: sidebar open, active panel, drawer state
-      streamStore.ts       ← Zustand: in-flight streaming state per session
-```
-
-### Base Client
-
-```typescript
-// lib/api/client.ts
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const session = await getSupabaseSession();
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session.access_token}`,
-      ...init?.headers,
-    },
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new ApiError(res.status, err.detail ?? "Unknown error");
-  }
-  return res.json() as Promise<T>;
-}
-```
-
-### Streaming Hook
-
-```typescript
-// lib/hooks/useStreamTurn.ts
-// Consumes POST /sessions/{id}/turns/stream (NDJSON/SSE)
-// Emits events: turn_started, step_started, step_delta, step_completed,
-//               turn_completed, turn_failed, round_start, round_end
-
-function useStreamTurn(sessionId: string) {
-  // Uses fetch + ReadableStream + TextDecoder
-  // Parses newline-delimited JSON
-  // Dispatches to streamStore
-  // On turn_completed: invalidates TanStack Query cache for session messages
-}
-```
-
----
-
-## 9. Auth Flow
-
-Uses `@supabase/ssr`:
-
-1. `/auth/login` — user enters email, Supabase sends magic link
-2. `/auth/callback` — Supabase redirects here with code, exchange for session, redirect to `/rooms`
-3. **Middleware** (`middleware.ts`) — runs on all routes except `/auth/*` and `/api/*`. If no valid session cookie → redirect to `/auth/login`
-4. **Session refresh** — `@supabase/ssr` handles automatic token refresh via middleware
-
-Admin routes (`/admin/*`) additionally check for `admin_role` claim in the JWT. If absent → 403 page.
-
----
-
-## 10. Streaming UX — Detailed Behavior
-
-This is the most critical UX surface. Get it right.
-
-### Event sequence (orchestrator mode, 2 rounds):
-
-```
-turn_started          → show user message in timeline, lock ChatInput
-round_start {round:1} → show "Round 1" divider
-step_started {agent}  → append empty AgentBubble with pulsing dots
-step_delta {text}     → append text to that bubble token by token
-step_completed        → show latency + credits on bubble, hide cursor
-step_started {agent}  → next agent bubble
-...
-round_end {round:1}
-round_start {round:2} → show "Round 2" divider
-...
-step_started {manager}→ ManagerSynthesisBubble with pulsing dots
-step_delta {text}     → stream synthesis
-turn_completed        → unlock ChatInput, final credits
-```
-
-### Rules:
-- Auto-scroll to bottom as new content arrives. Pause auto-scroll if user has scrolled up (detect scroll position).
-- Each `step_started` must immediately render a bubble — do not wait for `step_delta`.
-- `turn_failed` renders a red error bubble: `"Turn failed: {error_message}"`. ChatInput unlocks.
-- On page load, existing messages render as static bubbles (no streaming animation).
-
----
-
-## 11. Room Dashboard (Home)
-
-```
-/rooms
-```
-
-- **Quick Start Templates**: 5 cards — Inbox Copilot, Doc Review, Research Digest, KPI Review, + Blank. Clicking a template pre-fills the Create Room form.
-- **Recent Rooms**: grid of room cards. Each shows name, mode badge, last used, credit cost this session.
-- **Search**: filters rooms by name in real time (client-side filter on fetched list).
-- **Credit summary**: top-right — `120 / 495 cr`. Clicking navigates to `/billing`.
-
----
-
-## 12. Room Setup (Create/Edit)
-
-Two-step form:
-
-**Step 1 — Room**
-- Name (required)
-- Goal / description (optional, used in orchestrator system prompt)
-- Default mode: radio (Manual / Roundtable / Orchestrator)
-
-**Step 2 — Agents**
-- Ordered list of agents. Drag to reorder.
-- Each row: position number, agent name, model badge, tool permission badges (search, files)
-- "+ Add Agent" opens a modal to pick from user's agent library or create inline
-- Minimum 1 agent. Orchestrator mode requires ≥ 2.
-
-Validation runs on submit. Errors appear inline, not as toasts.
-
----
-
-## 13. Agent Library
-
-```
-/agents
-```
-
-- Grid of agent cards: name, model, tool permissions, "rooms using this"
-- Create agent form:
-  - Name
-  - Agent key (auto-generated from name, editable)
-  - Model: dropdown of supported aliases (llama, qwen, deepseek, gpt_oss, premium) with tier badges
-  - Role Prompt: large textarea with character counter
-  - Tools: checkboxes (web_search, file_read)
-
-Agents are shared across rooms — one agent can be in multiple rooms.
-
----
-
-## 14. Billing Page
-
-```
-/billing
-```
-
-Three sections:
-
-**1. Plan & Balance**
-```
-Balance: 375.00 credits    Plan: Starter ($29/mo)
-Used: 120 / 495  (24%)     [████░░░░░░]
-Forecast: ~340 this month  [Upgrade Plan]
-```
-
-**2. Usage by Model** (this month)
-Bar chart — model aliases on Y axis, credits on X axis. Uses `recharts` (lightweight).
-
-**3. Transaction History**
-Table: date, type (top_up / plan_grant / debit), amount, note, reference.
-
-**Top-up flow**:
-- "Add Credits" button → modal: amount input (min $1, max $500), shows credits preview
-- Calls `POST /users/me/wallet/top-up` → gets Stripe `client_secret`
-- Loads Stripe Elements inline (Payment Element) → user enters card
-- On success → optimistic balance update + refetch wallet
-
----
-
-## 15. Admin Dashboard
-
-```
-/admin
-```
-
-Guard: checks JWT for admin role. If not admin → show 403 page.
-
-**Sections:**
-1. Summary stats: DAU / WAU / MAU, total credits burned (30d), estimated margin
-2. Top users by cost + top models by cost (two side-by-side tables)
-3. User controls: input user ID → view wallet, set cap, suspend / reactivate
-4. Pricing editor: table of model aliases + multipliers, inline editable
-5. Audit log: last 50 actions, paginated
-
----
-
-## 16. Error Handling Standards
-
-| Scenario | Behavior |
+## 1. Purpose
+This is the single frontend source of truth for MVP implementation. It merges:
+- scope and delivery structure from `docs/frontend_development_plan.md`
+- implementation detail from prior `docs/frontend_plan.md`
+
+It is aligned to:
+- `docs/mvp_srs.md`
+- `docs/mvp_wireframes.md`
+- `docs/mvp_master_plan.md`
+- backend routes in `apps/api/app/api/v1/routes/*`
+
+## 2. Current Baseline
+
+### 2.1 Frontend state
+- Existing app: `apps/web` (Next.js app router scaffold)
+- Existing pages are placeholders:
+  - `/`
+  - `/auth/login`
+  - `/auth/callback`
+- No production UX, no API client layer, no streaming UI
+
+### 2.2 Backend readiness (implemented and usable)
+- Auth: `GET /api/v1/auth/me`
+- Rooms: create/list/read/delete, patch mode, room-agent assignment
+- Agents: create/list/read/update/delete
+- Sessions:
+  - room session create/list
+  - standalone agent session create/list
+  - message history read
+  - turn history read
+  - non-streaming turn submit
+  - streaming turn submit (SSE)
+- Files: room file upload + async parse lifecycle
+- Users: wallet, usage, transactions, top-up intent
+- Admin: pricing, settings, usage summary, analytics, wallet inspect, grants
+
+### 2.3 Backend gaps to track
+- Separate admin auth system is not implemented yet (current admin gate is user-id allowlist)
+- Some original master-plan admin controls are not yet exposed as APIs (caps/suspend/model-access rules)
+- F70 staging deploy drift is deployment-only, not a frontend code blocker
+
+## 3. Locked Technical Decisions
+
+| Concern | Decision |
 |---|---|
-| API 401 | Clear session, redirect to `/auth/login` |
-| API 403 | Show inline "Permission denied" message |
-| API 422 | Show field-level validation errors on form |
-| API 429 | Show "Rate limit — please wait a moment" banner in ChatInput |
-| API 5xx | Show "Something went wrong" with retry button |
-| Stream error | Show red error bubble in timeline, unlock input |
-| Network offline | Show "Connection lost" banner, auto-retry on reconnect |
+| Framework | Next.js app router + TypeScript |
+| Styling | Tailwind CSS + shadcn/ui |
+| Icons | lucide-react |
+| Server state | TanStack Query v5 |
+| Client UI state | Zustand |
+| Forms | React Hook Form + Zod |
+| Auth | `@supabase/ssr` with middleware |
+| Streaming transport | `fetch` + `ReadableStream` parser |
+| Markdown render | react-markdown + remark-gfm |
+| Charts | recharts |
+| Payments UI | Stripe Elements |
 
-Use a single `ApiError` class from the base client. Never show raw `detail` strings to users — map them to user-friendly messages.
+Rules:
+- Do not use EventSource for turn streaming because Authorization headers are required.
+- Do not expose service role secrets in frontend.
 
----
+## 4. Design System
 
-## 17. Loading and Empty States
+### 4.1 Color tokens
+- `bg.app`: `#09090b`
+- `bg.surface`: `#18181b`
+- `bg.raised`: `#27272a`
+- `border.default`: `#3f3f46`
+- `text.primary`: `#fafafa`
+- `text.muted`: `#a1a1aa`
+- `accent.primary`: `#8b5cf6`
+- `status.success`: `#22c55e`
+- `status.warning`: `#f59e0b`
+- `status.error`: `#ef4444`
 
-Every data-dependent surface needs three states:
+### 4.2 Typography
+- Primary font: Inter
+- Mono font: JetBrains Mono
+- Base size: 14px
 
-| State | Treatment |
-|---|---|
-| Loading | Skeleton placeholder (not spinner) — match shape of content |
-| Empty | Illustration + CTA. e.g. "No rooms yet — create your first room" |
-| Error | Inline error message + "Retry" button |
+### 4.3 Agent color policy
+- Position 1: sky
+- Position 2: violet
+- Position 3: emerald
+- Position 4+: amber
+- Manager synthesis: neutral gray
 
-Never use full-page spinners. Use skeletons for room list, agent list, message history.
+## 5. Route and Information Architecture
 
----
+### 5.1 Public/auth
+- `/`
+- `/auth/login`
+- `/auth/callback`
 
-## 18. File Upload Flow
+### 5.2 User app
+- `/rooms`
+- `/rooms/new`
+- `/rooms/[roomId]`
+- `/rooms/[roomId]/settings`
+- `/agents`
+- `/agents/new`
+- `/agents/[agentId]/edit`
+- `/billing`
 
-In ChatInput:
-1. User clicks 📎 → file picker opens (PDF/DOCX/TXT/MD/CSV, max 10MB)
-2. File is uploaded immediately via `POST /api/v1/files`
-3. While uploading: chip shows filename + progress bar
-4. On success: chip shows filename + ✓. File ID stored in send payload.
-5. On failure: chip shows red error, allow retry or remove
-6. On send: `message` payload includes `file_ids: [...]`
+### 5.3 Admin
+- `/admin`
+- `/admin/analytics`
+- `/admin/pricing`
+- `/admin/users`
 
-Files uploaded to a session persist for the session lifetime — they remain accessible in subsequent turns without re-uploading.
+## 6. Core Screen Specs
 
----
+### 6.1 Home dashboard
+- Recent rooms list
+- Quick-start templates
+- usage snapshot and billing shortcut
 
-## 19. Folder Structure
+### 6.2 Room create/edit
+- Room identity fields
+- Mode selector
+- Agent assignment and order
+- Save semantics and validation
 
-```
+### 6.3 Workspace (primary screen)
+Desktop: 3-panel layout
+- left: room info + roster
+- center: timeline + chat input
+- right: files + tool activity + usage
+
+Mobile:
+- single main timeline
+- tabbed secondary panels (chat/tools/files)
+
+### 6.4 Direct agent chat
+- standalone session entry from agent detail/list
+- same timeline and composer surface, scoped to agent session
+
+### 6.5 Billing
+- wallet balance
+- usage list
+- transaction history
+- top-up flow initiation and payment confirmation UX
+
+### 6.6 Admin dashboard
+- pricing multipliers
+- enforcement toggle and effective settings
+- usage summary bucketed charts/tables
+- usage and active-user analytics
+- wallet lookup and grants
+
+## 7. Streaming UX Specification (Mandatory)
+
+### 7.1 Transport and parser
+- Use `POST /api/v1/sessions/{session_id}/turns/stream`
+- Parse `text/event-stream` payload using `fetch` + `ReadableStream`
+- Each `data: {json}` event updates in-memory stream state
+
+### 7.2 Event handling contract
+Current backend emits:
+- `chunk` with `delta`
+- `round_start` with `round`
+- `round_end` with `round`
+- `done` with `turn_id`, `provider_model`, optional `balance_after`, `low_balance`, `summary_used_fallback`
+
+### 7.3 Visual behavior
+- Create an agent bubble immediately when a step starts logically (first delta for that agent if no explicit step event)
+- Append token deltas live into that bubble
+- Keep per-agent bubbles separate (never merge specialist and manager text)
+- Show round dividers for orchestrator multi-round flow
+- Append manager synthesis as distinct section/bubble
+- Auto-scroll to bottom unless user has manually scrolled up
+- On stream completion, unlock composer and refetch canonical turn/messages
+
+### 7.4 Failure behavior
+- Stream parse error: show inline failure state and offer non-stream retry
+- Backend 422 when tools + stream not supported: show actionable banner and allow fallback to non-stream send
+- Backend 402/429: show explicit blocking message and keep draft text
+
+## 8. Component Architecture
+
+### 8.1 Layout components
+- `AppShell`
+- `Sidebar`
+- `Topbar`
+- `MobileNav`
+
+### 8.2 Workspace components
+- `RoomWorkspace`
+- `ConversationTimeline`
+- `UserBubble`
+- `AgentBubble`
+- `ManagerSynthesisBubble`
+- `RoundDivider`
+- `StreamingIndicator`
+- `ChatInput`
+- `ModeSelector`
+- `TurnDetailsDrawer`
+- `AgentRoster`
+- `FilePanel`
+- `ToolActivityPanel`
+- `UsagePanel`
+
+### 8.3 Entity components
+- `RoomCard`
+- `RoomForm`
+- `RoomAgentAssignment`
+- `AgentCard`
+- `AgentForm`
+
+### 8.4 Billing/admin components
+- `WalletCard`
+- `UsageChart`
+- `TransactionTable`
+- `TopUpModal`
+- `PricingEditor`
+- `EnforcementControls`
+- `AdminAnalyticsPanel`
+- `AdminWalletInspector`
+
+## 9. Folder Structure (Locked)
+
+```text
 apps/web/src/
-  app/                        ← Next.js App Router pages
-    (authed)/                 ← route group — protected by middleware
-      layout.tsx              ← root authed layout (sidebar + topbar)
+  app/
+    (authed)/
+      layout.tsx
       rooms/
-        page.tsx              ← /rooms dashboard
-        new/
-          page.tsx            ← create room
-        [roomId]/
-          page.tsx            ← room workspace
-          settings/
-            page.tsx          ← room settings
       agents/
-        page.tsx
-        new/page.tsx
-        [agentId]/edit/page.tsx
       billing/
-        page.tsx
       admin/
-        layout.tsx            ← admin guard
-        page.tsx
-        users/page.tsx
-        analytics/page.tsx
-        pricing/page.tsx
     auth/
       login/page.tsx
       callback/page.tsx
     globals.css
-    layout.tsx                ← root layout (minimal, no sidebar)
+    layout.tsx
 
   components/
-    ui/                       ← shadcn/ui generated components
+    ui/
     layout/
-      Sidebar.tsx
-      Topbar.tsx
-      MobileNav.tsx
     room/
-      RoomWorkspace.tsx
-      ConversationTimeline.tsx
-      ChatInput.tsx
-      AgentBubble.tsx
-      ManagerSynthesisBubble.tsx
-      RoundDivider.tsx
-      TurnDetailsDrawer.tsx
-      ModeSelector.tsx
-      AgentRoster.tsx
-      ToolActivityPanel.tsx
-      FilePanel.tsx
-      UsagePanel.tsx
     agents/
-      AgentCard.tsx
-      AgentForm.tsx
     billing/
-      WalletCard.tsx
-      UsageChart.tsx
-      TransactionTable.tsx
-      TopUpModal.tsx
     admin/
-      UserControls.tsx
-      AnalyticsPanel.tsx
-      PricingEditor.tsx
-      AuditLog.tsx
     common/
-      CreditBadge.tsx
-      ModelBadge.tsx
-      ModeBadge.tsx
-      SkeletonList.tsx
-      EmptyState.tsx
-      ErrorState.tsx
-      ConfirmDialog.tsx
 
   lib/
-    api/         ← fetch wrappers (see §8)
-    hooks/       ← TanStack Query + streaming hooks
-    stores/      ← Zustand stores
+    api/
+      client.ts
+      rooms.ts
+      agents.ts
+      sessions.ts
+      files.ts
+      users.ts
+      admin.ts
+    hooks/
+    stores/
     supabase/
-      client.ts  ← browser client
-      server.ts  ← server client (for RSC)
+      client.ts
+      server.ts
       middleware.ts
     utils/
-      formatting.ts   ← credit formatting, date formatting
-      streaming.ts    ← NDJSON parser, SSE reader
+      formatting.ts
+      streaming.ts
 
   types/
-    api.ts       ← TypeScript types matching backend schemas
-    events.ts    ← streaming event types
+    api.ts
+    events.ts
 
-  middleware.ts  ← route protection
+  middleware.ts
 ```
 
----
+## 10. API Integration Matrix
 
-## 20. Implementation Order
+### 10.1 User app
+- Auth: `GET /api/v1/auth/me`
+- Rooms:
+  - `POST /api/v1/rooms`
+  - `GET /api/v1/rooms`
+  - `GET /api/v1/rooms/{room_id}`
+  - `DELETE /api/v1/rooms/{room_id}`
+  - `PATCH /api/v1/rooms/{room_id}/mode`
+- Room agents:
+  - `POST /api/v1/rooms/{room_id}/agents`
+  - `GET /api/v1/rooms/{room_id}/agents`
+  - `DELETE /api/v1/rooms/{room_id}/agents/{agent_id}`
+- Agents:
+  - `POST /api/v1/agents`
+  - `GET /api/v1/agents`
+  - `GET /api/v1/agents/{agent_id}`
+  - `PATCH /api/v1/agents/{agent_id}`
+  - `DELETE /api/v1/agents/{agent_id}`
+- Sessions:
+  - `POST /api/v1/rooms/{room_id}/sessions`
+  - `GET /api/v1/rooms/{room_id}/sessions`
+  - `POST /api/v1/agents/{agent_id}/sessions`
+  - `GET /api/v1/agents/{agent_id}/sessions`
+  - `GET /api/v1/sessions/{session_id}/messages`
+  - `GET /api/v1/sessions/{session_id}/turns`
+  - `POST /api/v1/sessions/{session_id}/turns`
+  - `POST /api/v1/sessions/{session_id}/turns/stream`
+- Files:
+  - `POST /api/v1/rooms/{room_id}/files`
+- Billing/user:
+  - `GET /api/v1/users/me/wallet`
+  - `POST /api/v1/users/me/wallet/top-up`
+  - `GET /api/v1/users/me/usage`
+  - `GET /api/v1/users/me/transactions`
 
-Build in this sequence. Each phase is independently shippable.
+### 10.2 Admin
+- Pricing:
+  - `GET /api/v1/admin/pricing`
+  - `PATCH /api/v1/admin/pricing/{model_alias}`
+- Settings:
+  - `GET /api/v1/admin/settings`
+  - `PATCH /api/v1/admin/settings/enforcement`
+  - `DELETE /api/v1/admin/settings/enforcement`
+- Usage summary:
+  - `GET /api/v1/admin/usage/summary`
+- Analytics:
+  - `GET /api/v1/admin/analytics/usage`
+  - `GET /api/v1/admin/analytics/active-users`
+- Wallet ops:
+  - `GET /api/v1/admin/wallets/{user_id}`
+  - `POST /api/v1/admin/wallets/{user_id}/grant`
+  - `POST /api/v1/admin/users/{user_id}/wallet/grant`
 
-**Phase 1 — Foundation** (do this first, everything depends on it)
-- Tailwind + shadcn/ui setup
-- Supabase auth middleware
-- Base API client
-- Sidebar + authed layout
-- `/rooms` dashboard with real data
+## 11. State and Data Strategy
+- TanStack Query for all server data fetching, cache, invalidation, pagination
+- Zustand for local UI state only:
+  - sidebar open/closed
+  - active mobile tab
+  - stream in-flight buffer per session
+  - drawer/modal visibility
+- No ad-hoc duplicated fetch state in components
 
-**Phase 2 — Core Chat**
-- Room workspace 3-panel layout
-- Conversation timeline (static messages)
-- ChatInput (non-streaming send)
-- AgentBubble, UserBubble
+## 12. Error and Status Standards
 
-**Phase 3 — Streaming**
-- SSE streaming hook
-- Live AgentBubble with token-by-token rendering
-- Round dividers, ManagerSynthesisBubble
-- StreamingIndicator (dots)
+| HTTP/status | UI behavior |
+|---|---|
+| 401 | clear session and redirect to login |
+| 403 | permission denied screen or inline guard message |
+| 404 | not found state, no resource leakage copy |
+| 422 | inline form validation errors |
+| 429 | rate-limit banner with retry hint |
+| 402 | insufficient credits callout in composer area |
+| 5xx | generic error state + retry action |
+| stream error | keep draft, unlock input, offer non-stream resend |
 
-**Phase 4 — Room Management**
-- Create Room form (2-step)
-- Room Settings page
-- Mode change banner in timeline
-- ChatInput @tagging for manual mode
+Loading/empty/error states are required for every data surface.
 
-**Phase 5 — Agents**
-- Agent library page
-- Create/edit agent form
+## 13. Mobile Behavior (Required)
+- Sidebar becomes drawer
+- Workspace collapses to single-column timeline
+- Secondary panes become tab views
+- Composer remains sticky at bottom
+- Drawer and sheet interactions must be keyboard-accessible and touch-friendly
 
-**Phase 6 — Files**
-- File upload in ChatInput
-- File panel in right sidebar
-- Tool activity display
+## 14. Delivery Order (No schedule estimates)
 
-**Phase 7 — Billing**
-- Wallet page
-- Top-up modal (Stripe Elements)
-- Transaction history
+### Phase A - Foundation
+- auth, app shell, API client, route protection
 
-**Phase 8 — Admin**
-- Admin layout + guard
-- Analytics page
-- User controls
-- Pricing editor
+### Phase B - Entities and navigation
+- rooms, agents, assignment, session bootstrapping
 
-**Phase 9 — Polish**
-- TurnDetailsDrawer
-- Mobile layout (tab-based)
-- Empty + error states throughout
-- Keyboard shortcuts (Cmd+K room search, Esc to close drawers)
+### Phase C - Workspace and streaming
+- timeline, composer, stream parser, round visualization, history replay
 
----
+### Phase D - Files and tool-aware UX
+- uploader, parse status, file context affordances
 
-## 21. Dependencies to Install
+### Phase E - Billing and top-up
+- wallet, usage, transactions, top-up UX
 
-```bash
-npm install tailwindcss @tailwindcss/typography postcss autoprefixer
-npx shadcn-ui@latest init
-npm install @tanstack/react-query zustand
-npm install @supabase/supabase-js @supabase/ssr
-npm install react-hook-form @hookform/resolvers zod
-npm install react-markdown remark-gfm
-npm install recharts
-npm install @stripe/stripe-js @stripe/react-stripe-js
-npm install lucide-react   # comes with shadcn, but explicit
-```
+### Phase F - Admin surfaces
+- pricing, settings, analytics, wallet grants
 
----
+### Phase G - Hardening
+- accessibility, performance, E2E, release polish
 
-## 22. Key Constraints
+## 15. Testing and Quality Gates
+- Unit: parsing, adapters, formatting, reducer/store logic
+- Integration: screen-level data and mutation behavior
+- E2E critical flows:
+  1. login and bootstrap
+  2. room session turn (non-stream and stream)
+  3. standalone agent session turn and history reload
+  4. file upload and parsed usage in conversation
+  5. wallet/top-up flow
+  6. admin pricing and analytics flow
 
-- **Never call the API from Server Components** — all data fetching goes through client-side TanStack Query hooks. This keeps auth token handling uniform and avoids RSC/streaming conflicts.
-- **Never expose the Supabase service role key client-side** — only the anon key in `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-- **Streaming endpoint** is `POST /sessions/{id}/turns/stream` — it requires `Authorization` header. This rules out `EventSource` (which doesn't support custom headers). Use `fetch` with `ReadableStream`.
-- **Credit formatting** — always show 2 decimal places. `120.00 cr`, not `120 cr`.
-- **Mode change** — `PATCH /rooms/{id}/mode` updates `pending_mode`. The effective mode for the next turn is set at turn execution time by the backend. The frontend must reflect this distinction clearly.
+Done criteria for frontend MVP:
+1. All UI-002 core screens are fully functional
+2. Streaming UX works for room and standalone turn flows
+3. Conversation history is durable and reloadable
+4. Billing and admin views are functional and guarded
+5. Mobile core flows are usable and tested
+
+## 16. Open Dependencies and Risks
+- F70 staging parity must be resolved by deployment action
+- Product-owner thresholds in `docs/enforcement_production_criteria.md` remain external inputs
+- Admin auth hardening remains a backend dependency for full production governance

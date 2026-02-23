@@ -221,3 +221,6 @@ __marimo__/
 # Frontend build artifacts
 node_modules/
 apps/web/.next/
+# Keep frontend source lib folder tracked.
+!apps/web/src/lib/
+!apps/web/src/lib/**
