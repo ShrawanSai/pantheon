@@ -37,6 +37,7 @@ class User(Base):
     )
 
     rooms: Mapped[list["Room"]] = relationship(back_populates="owner")
+    agents: Mapped[list["Agent"]] = relationship(back_populates="owner")
     started_sessions: Mapped[list["Session"]] = relationship(back_populates="started_by")
 
 
@@ -64,20 +65,44 @@ class Room(Base):
     sessions: Mapped[list["Session"]] = relationship(back_populates="room")
 
 
+class Agent(Base):
+    __tablename__ = "agents"
+    __table_args__ = (UniqueConstraint("owner_user_id", "agent_key", name="uq_agents_owner_agent_key"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    agent_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    model_alias: Mapped[str] = mapped_column(String(64), nullable=False)
+    role_prompt: Mapped[str] = mapped_column(Text(), nullable=False, server_default=text("''"))
+    tool_permissions_json: Mapped[str] = mapped_column(
+        Text(), nullable=False, server_default=text("'[]'")
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    owner: Mapped["User"] = relationship(back_populates="agents")
+    room_assignments: Mapped[list["RoomAgent"]] = relationship(back_populates="agent")
+    standalone_sessions: Mapped[list["Session"]] = relationship(back_populates="agent")
+
+
 class RoomAgent(Base):
     __tablename__ = "room_agents"
-    __table_args__ = (UniqueConstraint("room_id", "agent_key", name="uq_room_agents_room_agent_key"),)
+    __table_args__ = (UniqueConstraint("room_id", "agent_id", name="uq_room_agents_room_agent_id"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     room_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    agent_key: Mapped[str] = mapped_column(String(64), nullable=False)
-    name: Mapped[str] = mapped_column(String(120), nullable=False)
-    model_alias: Mapped[str] = mapped_column(String(64), nullable=False)
-    role_prompt: Mapped[str] = mapped_column(Text(), nullable=False)
-    tool_permissions_json: Mapped[str] = mapped_column(
-        Text(), nullable=False, server_default=text("'[]'")
+    agent_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
     )
     position: Mapped[int] = mapped_column(Integer(), nullable=False, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(
@@ -85,14 +110,24 @@ class RoomAgent(Base):
     )
 
     room: Mapped["Room"] = relationship(back_populates="agents")
+    agent: Mapped["Agent"] = relationship(back_populates="room_assignments")
 
 
 class Session(Base):
     __tablename__ = "sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "(room_id IS NOT NULL AND agent_id IS NULL) OR (room_id IS NULL AND agent_id IS NOT NULL)",
+            name="ck_sessions_scope",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    room_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False, index=True
+    room_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    agent_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True
     )
     started_by_user_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
@@ -102,7 +137,8 @@ class Session(Base):
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
 
-    room: Mapped["Room"] = relationship(back_populates="sessions")
+    room: Mapped["Room | None"] = relationship(back_populates="sessions")
+    agent: Mapped["Agent | None"] = relationship(back_populates="standalone_sessions")
     started_by: Mapped["User"] = relationship(back_populates="started_sessions")
     turns: Mapped[list["Turn"]] = relationship(back_populates="session")
     messages: Mapped[list["Message"]] = relationship(back_populates="session")
@@ -134,6 +170,12 @@ class Turn(Base):
 
 class Message(Base):
     __tablename__ = "messages"
+    __table_args__ = (
+        CheckConstraint("visibility IN ('shared', 'private')", name="ck_messages_visibility"),
+    )
+    # agent_key: scratchpad scoping owner for private context rows
+    # source_agent_key: producing agent attribution for audit/display regardless of visibility
+    # For current write paths they match for assistant/tool rows. User rows keep both as NULL.
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     turn_id: Mapped[str | None] = mapped_column(
@@ -143,6 +185,11 @@ class Message(Base):
         String(64), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     role: Mapped[str] = mapped_column(String(32), nullable=False)
+    visibility: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'shared'")
+    )
+    agent_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_agent_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     agent_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     mode: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text(), nullable=False)

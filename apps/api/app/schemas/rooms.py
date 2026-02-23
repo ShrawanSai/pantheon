@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from apps.api.app.schemas.agents import AgentRead
 
 RoomMode = Literal["manual", "tag", "roundtable", "orchestrator"]
 
@@ -37,17 +38,27 @@ class RoomRead(BaseModel):
     updated_at: datetime
 
 
+class RoomModeUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str = Field(min_length=1, max_length=32)
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode_non_blank(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("mode must not be blank.")
+        return trimmed
+
+
 class RoomAgentCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    agent_key: str = Field(min_length=1, max_length=64)
-    name: str = Field(min_length=1, max_length=120)
-    model_alias: str = Field(min_length=1, max_length=64)
-    role_prompt: str = Field(min_length=1)
-    tool_permissions: list[str] = Field(default_factory=list)
+    agent_id: str = Field(min_length=1, max_length=64)
     position: int | None = Field(default=None, ge=1)
 
-    @field_validator("agent_key", "name", "model_alias", "role_prompt")
+    @field_validator("agent_id")
     @classmethod
     def validate_non_blank_string(cls, value: str) -> str:
         trimmed = value.strip()
@@ -61,10 +72,7 @@ class RoomAgentRead(BaseModel):
 
     id: str
     room_id: str
-    agent_key: str
-    name: str
-    model_alias: str
-    role_prompt: str
-    tool_permissions: list[str]
+    agent_id: str
+    agent: AgentRead
     position: int
     created_at: datetime

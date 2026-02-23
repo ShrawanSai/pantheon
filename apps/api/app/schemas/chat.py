@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 TurnMode = Literal["manual", "tag", "roundtable", "orchestrator"]
+SessionMode = Literal["manual", "tag", "roundtable", "orchestrator", "standalone"]
 
 
 class SessionCreateRequest(BaseModel):
@@ -16,7 +17,8 @@ class SessionRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    room_id: str
+    room_id: str | None
+    agent_id: str | None = None
     started_by_user_id: str
     created_at: datetime
     deleted_at: datetime | None
@@ -51,7 +53,7 @@ class TurnRead(BaseModel):
     id: str
     session_id: str
     turn_index: int
-    mode: TurnMode
+    mode: SessionMode
     user_input: str
     assistant_output: str
     status: str
@@ -63,3 +65,40 @@ class TurnRead(BaseModel):
     low_balance: bool = False
     summary_used_fallback: bool = False
     created_at: datetime
+
+
+class SessionMessageRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    role: str
+    agent_name: str | None
+    content: str
+    turn_id: str | None
+    created_at: datetime
+
+
+class SessionMessageListRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    messages: list[SessionMessageRead]
+    total: int
+
+
+class SessionTurnHistoryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    turn_index: int
+    mode: SessionMode
+    user_input: str
+    assistant_output: str
+    status: str
+    created_at: datetime
+
+
+class SessionTurnListRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    turns: list[SessionTurnHistoryRead]
+    total: int

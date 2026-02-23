@@ -7,16 +7,19 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.app.db.models import Room, RoomAgent, User
+from apps.api.app.db.models import Agent, Room, RoomAgent, User
 from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.auth import get_current_user
 from apps.api.app.dependencies.rooms import get_owned_active_room_or_404
+from apps.api.app.schemas.agents import AgentRead
 from apps.api.app.schemas.rooms import (
     RoomAgentCreateRequest,
     RoomAgentRead,
     RoomCreateRequest,
+    RoomModeUpdateRequest,
     RoomRead,
 )
 
@@ -36,23 +39,37 @@ def _room_to_read(room: Room) -> RoomRead:
     )
 
 
-def _agent_to_read(agent: RoomAgent) -> RoomAgentRead:
+def _agent_model_to_read(agent: Agent) -> AgentRead:
     try:
         tool_permissions = json.loads(agent.tool_permissions_json)
     except json.JSONDecodeError:
         tool_permissions = []
     if not isinstance(tool_permissions, list):
         tool_permissions = []
-    return RoomAgentRead(
+    return AgentRead(
         id=agent.id,
-        room_id=agent.room_id,
+        owner_user_id=agent.owner_user_id,
         agent_key=agent.agent_key,
         name=agent.name,
         model_alias=agent.model_alias,
         role_prompt=agent.role_prompt,
         tool_permissions=[str(item) for item in tool_permissions],
-        position=agent.position,
         created_at=agent.created_at,
+        updated_at=agent.updated_at,
+    )
+
+
+def _assignment_to_read(assignment: RoomAgent) -> RoomAgentRead:
+    if assignment.agent is None:
+        raise ValueError("RoomAgent assignment missing linked agent.")
+    agent_for_read = _agent_model_to_read(assignment.agent)
+    return RoomAgentRead(
+        id=assignment.id,
+        room_id=assignment.room_id,
+        agent_id=assignment.agent_id,
+        agent=agent_for_read,
+        position=assignment.position,
+        created_at=assignment.created_at,
     )
 
 
@@ -131,6 +148,30 @@ async def delete_room(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.patch("/{room_id}/mode", response_model=RoomRead)
+async def patch_room_mode(
+    room_id: str,
+    payload: RoomModeUpdateRequest,
+    current_user: dict[str, str] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> RoomRead:
+    user_id = current_user["user_id"]
+    room = await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+
+    requested_mode = payload.mode.strip().lower()
+    if requested_mode not in {"manual", "roundtable", "orchestrator"}:
+        raise HTTPException(
+            status_code=422,
+            detail="unsupported mode; allowed: manual, roundtable, orchestrator",
+        )
+
+    room.current_mode = requested_mode
+    room.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(room)
+    return _room_to_read(room)
+
+
 @router.post("/{room_id}/agents", response_model=RoomAgentRead, status_code=status.HTTP_201_CREATED)
 async def create_room_agent(
     room_id: str,
@@ -140,6 +181,15 @@ async def create_room_agent(
 ) -> RoomAgentRead:
     user_id = current_user["user_id"]
     await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+    agent = await db.scalar(
+        select(Agent).where(
+            Agent.id == payload.agent_id,
+            Agent.owner_user_id == user_id,
+            Agent.deleted_at.is_(None),
+        )
+    )
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found.")
 
     if payload.position is None:
         max_position = await db.scalar(select(func.max(RoomAgent.position)).where(RoomAgent.room_id == room_id))
@@ -147,26 +197,28 @@ async def create_room_agent(
     else:
         position = payload.position
 
-    agent = RoomAgent(
+    assignment = RoomAgent(
         id=str(uuid4()),
         room_id=room_id,
-        agent_key=payload.agent_key,
-        name=payload.name,
-        model_alias=payload.model_alias,
-        role_prompt=payload.role_prompt,
-        tool_permissions_json=json.dumps(payload.tool_permissions),
+        agent_id=payload.agent_id,
         position=position,
     )
-    db.add(agent)
+    db.add(assignment)
 
     try:
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=409, detail="Agent key already exists in this room.") from exc
+        raise HTTPException(status_code=409, detail="Agent already assigned to this room.") from exc
 
-    await db.refresh(agent)
-    return _agent_to_read(agent)
+    stored_assignment = await db.scalar(
+        select(RoomAgent)
+        .options(selectinload(RoomAgent.agent))
+        .where(RoomAgent.id == assignment.id)
+    )
+    if stored_assignment is None:
+        raise HTTPException(status_code=500, detail="Failed to load created room assignment.")
+    return _assignment_to_read(stored_assignment)
 
 
 @router.get("/{room_id}/agents", response_model=list[RoomAgentRead])
@@ -180,16 +232,21 @@ async def list_room_agents(
 
     result = await db.scalars(
         select(RoomAgent)
-        .where(RoomAgent.room_id == room_id)
+        .options(selectinload(RoomAgent.agent))
+        .join(Agent, Agent.id == RoomAgent.agent_id)
+        .where(
+            RoomAgent.room_id == room_id,
+            Agent.deleted_at.is_(None),
+        )
         .order_by(RoomAgent.position.asc(), RoomAgent.created_at.asc())
     )
-    return [_agent_to_read(agent) for agent in result.all()]
+    return [_assignment_to_read(agent) for agent in result.all()]
 
 
-@router.delete("/{room_id}/agents/{agent_key}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{room_id}/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_room_agent(
     room_id: str,
-    agent_key: str,
+    agent_id: str,
     current_user: dict[str, str] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
@@ -199,7 +256,7 @@ async def delete_room_agent(
     agent = await db.scalar(
         select(RoomAgent).where(
             RoomAgent.room_id == room_id,
-            RoomAgent.agent_key == agent_key,
+            RoomAgent.agent_id == agent_id,
         )
     )
     if agent is None:

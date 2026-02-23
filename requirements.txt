@@ -13,3 +13,4 @@ psycopg[binary]
 aiosqlite
 httpx
 python-multipart
+stripe>=10.0.0

@@ -45,3 +45,17 @@ class TransactionListRead(BaseModel):
 
     transactions: list[TransactionRead]
     total: int
+
+
+class WalletTopUpCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount_usd: float
+
+
+class WalletTopUpRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_secret: str
+    credits_to_grant: float
+    amount_usd: float

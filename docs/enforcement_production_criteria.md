@@ -20,7 +20,7 @@ All criteria below must be satisfied before changing the production default.
 
 ### 3. Wallet Top-Up Flow Live and Tested (binary gate)
 - Requirement: top-up flow exists in production and has a passing end-to-end test path.
-- Status: pass/fail.
+- Status: PASS (implemented and tested locally in Week 18).
 
 ### 4. Warn-Only Observation Window (observation gate)
 - Requirement: at least one full week of warn-only production data with `low_balance` visibility.

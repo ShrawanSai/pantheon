@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.app.core.config import Settings, get_settings
-from apps.api.app.db.models import CreditTransaction, CreditWallet, LlmCallEvent
+from apps.api.app.db.models import CreditTransaction, CreditWallet, LlmCallEvent, Session
 from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.auth import get_current_user
 from apps.api.app.schemas.admin import (
@@ -16,6 +17,8 @@ from apps.api.app.schemas.admin import (
     AdminEnforcementUpdate,
     AdminGrantRequest,
     AdminGrantResponse,
+    AdminActiveUsersRead,
+    AdminUserGrantResponse,
     AdminPricingListRead,
     AdminPricingRead,
     AdminSettingsRead,
@@ -23,6 +26,8 @@ from apps.api.app.schemas.admin import (
     AdminTransactionRead,
     AdminUsageBucket,
     AdminUsageBreakdownItem,
+    AdminUsageAnalyticsRead,
+    AdminUsageAnalyticsRowRead,
     AdminUsageSummaryRead,
     AdminWalletRead,
 )
@@ -197,6 +202,120 @@ async def get_usage_summary(
     )
 
 
+@router.get("/analytics/usage", response_model=AdminUsageAnalyticsRead)
+async def get_admin_usage_analytics(
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    _: dict[str, str] = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> AdminUsageAnalyticsRead:
+    if end_date < start_date:
+        raise HTTPException(status_code=422, detail="end_date must be on or after start_date")
+
+    window_start = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+    window_end = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=timezone.utc)
+
+    grouped = (
+        select(
+            LlmCallEvent.user_id.label("user_id"),
+            LlmCallEvent.model_alias.label("model_alias"),
+            func.coalesce(
+                func.sum(LlmCallEvent.input_tokens_fresh + LlmCallEvent.input_tokens_cached),
+                0,
+            ).label("total_input_tokens"),
+            func.coalesce(func.sum(LlmCallEvent.output_tokens), 0).label("total_output_tokens"),
+            func.coalesce(func.sum(LlmCallEvent.credits_burned), 0).label("total_credits_burned"),
+            func.count(LlmCallEvent.id).label("event_count"),
+        )
+        .where(
+            LlmCallEvent.created_at >= window_start,
+            LlmCallEvent.created_at < window_end,
+        )
+        .group_by(LlmCallEvent.user_id, LlmCallEvent.model_alias)
+        .subquery()
+    )
+
+    total = int(await db.scalar(select(func.count()).select_from(grouped)) or 0)
+    rows = (
+        await db.execute(
+            select(grouped)
+            .order_by(grouped.c.total_credits_burned.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+
+    return AdminUsageAnalyticsRead(
+        rows=[
+            AdminUsageAnalyticsRowRead(
+                user_id=str(row.user_id),
+                model_alias=str(row.model_alias),
+                total_input_tokens=int(row.total_input_tokens),
+                total_output_tokens=int(row.total_output_tokens),
+                total_credits_burned=format_decimal(Decimal(str(row.total_credits_burned))),
+                event_count=int(row.event_count),
+            )
+            for row in rows
+        ],
+        total=total,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+@router.get("/analytics/active-users", response_model=AdminActiveUsersRead)
+async def get_admin_active_users(
+    window: Literal["day", "week", "month"] = Query(default="day"),
+    as_of: date | None = Query(default=None),
+    _: dict[str, str] = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> AdminActiveUsersRead:
+    as_of_date = as_of or datetime.now(timezone.utc).date()
+    days_back = {"day": 0, "week": 6, "month": 29}[window]
+    window_start_date = as_of_date - timedelta(days=days_back)
+    window_start = datetime.combine(window_start_date, time.min, tzinfo=timezone.utc)
+    window_end = datetime.combine(as_of_date + timedelta(days=1), time.min, tzinfo=timezone.utc)
+
+    active_users = int(
+        await db.scalar(
+            select(func.count(func.distinct(Session.started_by_user_id))).where(
+                Session.deleted_at.is_(None),
+                Session.created_at >= window_start,
+                Session.created_at < window_end,
+            )
+        )
+        or 0
+    )
+
+    first_seen_subquery = (
+        select(
+            Session.started_by_user_id.label("user_id"),
+            func.min(Session.created_at).label("first_seen"),
+        )
+        .where(Session.deleted_at.is_(None))
+        .group_by(Session.started_by_user_id)
+        .subquery()
+    )
+    new_users = int(
+        await db.scalar(
+            select(func.count()).select_from(first_seen_subquery).where(
+                first_seen_subquery.c.first_seen >= window_start,
+                first_seen_subquery.c.first_seen < window_end,
+            )
+        )
+        or 0
+    )
+
+    return AdminActiveUsersRead(
+        window=window,
+        as_of=as_of_date,
+        active_users=active_users,
+        new_users=new_users,
+    )
+
+
 @router.get("/settings", response_model=AdminSettingsRead)
 async def get_admin_settings(
     _: dict[str, str] = Depends(require_admin),
@@ -289,4 +408,27 @@ async def grant_wallet_credits(
         user_id=user_id,
         new_balance=format_decimal(result.new_balance),
         transaction_id=result.transaction_id or "",
+    )
+
+
+@router.post("/users/{user_id}/wallet/grant", response_model=AdminUserGrantResponse)
+async def admin_grant_user_wallet_credits(
+    user_id: str,
+    payload: AdminGrantRequest,
+    admin_user: dict[str, str] = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    wallet_service: WalletService = Depends(get_wallet_service),
+) -> AdminUserGrantResponse:
+    result = await wallet_service.stage_grant(
+        db=db,
+        user_id=user_id,
+        amount=payload.amount,
+        note=payload.note,
+        initiated_by=admin_user["user_id"],
+    )
+    await db.commit()
+    return AdminUserGrantResponse(
+        user_id=user_id,
+        credits_granted=payload.amount,
+        new_balance=format_decimal(result.new_balance),
     )

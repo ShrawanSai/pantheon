@@ -30,6 +30,10 @@ Scope: Week 1 environment variable contract for frontend/backend/worker
 | `NEXT_PUBLIC_API_BASE_URL` | Yes | Frontend | Frontend | Browser-callable backend base URL |
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Frontend | Frontend | Supabase URL for auth client |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Frontend | Frontend | Supabase anon key for auth client |
+| `STRIPE_SECRET_KEY` | Yes (payments enabled) | Backend | API | Stripe secret key for PaymentIntent creation |
+| `STRIPE_WEBHOOK_SECRET` | Yes (payments enabled) | Backend | API | Stripe webhook signature verification secret |
+| `RATE_LIMIT_TURNS_PER_MINUTE` | No (default `10`) | Backend | API | Per-user burst protection on turn submit endpoints |
+| `RATE_LIMIT_TURNS_PER_HOUR` | No (default `60`) | Backend | API | Per-user hourly turn cap on turn submit endpoints |
 
 ## 3. Environment Mapping
 
@@ -59,3 +63,9 @@ Populate these during W1-05:
 4. Railway Redis instance URL
 5. Vercel project URL
 
+## 5. Payment Webhook Contract
+- Webhook endpoint path: `/webhooks/stripe`
+- Auth: no JWT required (Stripe signature verification instead)
+- Local testing shortcut:
+  - If `STRIPE_WEBHOOK_SECRET` is unset, signature verification is skipped.
+  - This shortcut is for local/non-production testing only.

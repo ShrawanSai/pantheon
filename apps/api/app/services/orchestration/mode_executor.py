@@ -7,7 +7,7 @@ import logging
 import time
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import TypedDict
+from typing import Protocol, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -72,6 +72,11 @@ class ToolCallRecord:
     output_json: str
     status: str
     latency_ms: int | None
+    tool_call_id: str | None = None
+
+
+class TurnExecutor(Protocol):
+    async def run_turn(self, db: AsyncSession, payload: TurnExecutionInput) -> TurnExecutionOutput: ...
 
 
 class LangGraphModeExecutor:
@@ -345,13 +350,15 @@ def _setup_checkpointer_once(checkpointer: object) -> None:
 
 
 @lru_cache(maxsize=1)
-def _get_cached_mode_executor() -> LangGraphModeExecutor:
-    return LangGraphModeExecutor(
+def _get_cached_mode_executor():
+    from apps.api.app.services.orchestration.react_executor import ReactAgentExecutor
+
+    return ReactAgentExecutor(
         llm_gateway=get_llm_gateway(),
         search_tool=get_search_tool(),
         file_read_tool=get_file_read_tool(),
     )
 
 
-def get_mode_executor() -> LangGraphModeExecutor:
+def get_mode_executor():
     return _get_cached_mode_executor()

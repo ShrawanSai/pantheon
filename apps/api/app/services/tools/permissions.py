@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 
-from apps.api.app.db.models import RoomAgent
+from apps.api.app.db.models import Agent
 
 
-def get_permitted_tool_names(agent: RoomAgent) -> list[str]:
+def get_permitted_tool_names(agent: Agent) -> list[str]:
     """Return canonical tool names an agent is allowed to invoke."""
     raw = agent.tool_permissions_json or "[]"
     try:
@@ -25,10 +25,9 @@ def get_permitted_tool_names(agent: RoomAgent) -> list[str]:
     return tools
 
 
-def is_tool_permitted(agent: RoomAgent, tool_name: str) -> bool:
+def is_tool_permitted(agent: Agent, tool_name: str) -> bool:
     """Return True if tool_name is present in the agent's allowed tool list."""
     normalized = tool_name.strip().lower()
     if not normalized:
         return False
     return normalized in get_permitted_tool_names(agent)
-
