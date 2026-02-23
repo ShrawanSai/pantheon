@@ -44,10 +44,10 @@ class AdminUsageSummaryRead(BaseModel):
     from_date: date | None = None
     to_date: date | None = None
     breakdown: list[AdminUsageBreakdownItem]
-    daily: list["AdminUsageDailyBucket"] = []
+    daily: list["AdminUsageBucket"] = []
 
 
-class AdminUsageDailyBucket(BaseModel):
+class AdminUsageBucket(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     date: date
@@ -87,3 +87,25 @@ class AdminGrantResponse(BaseModel):
     user_id: str
     new_balance: str
     transaction_id: str
+
+
+class AdminEnforcementUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
+class AdminEnforcementRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enforcement_enabled: bool
+    source: str
+
+
+class AdminSettingsRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enforcement_enabled: bool
+    enforcement_source: str
+    low_balance_threshold: float
+    pricing_version: str

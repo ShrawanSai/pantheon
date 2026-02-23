@@ -61,4 +61,5 @@ class TurnRead(BaseModel):
     overflow_rejected: bool
     balance_after: str | None = None
     low_balance: bool = False
+    summary_used_fallback: bool = False
     created_at: datetime

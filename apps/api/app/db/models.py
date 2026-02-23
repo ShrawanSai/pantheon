@@ -317,7 +317,7 @@ class ToolCallEvent(Base):
     # Intentionally no FK to users.id: telemetry rows should remain for audit/history
     # even if user records are soft-deleted or hard-deleted in future maintenance paths.
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    room_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    room_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     session_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     turn_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("turns.id", ondelete="CASCADE"), nullable=False, index=True

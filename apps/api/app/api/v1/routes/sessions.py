@@ -42,6 +42,7 @@ from apps.api.app.services.orchestration.mode_executor import (
 from apps.api.app.services.orchestration.orchestrator_manager import route_turn
 from apps.api.app.services.orchestration.summary_extractor import extract_summary_structure
 from apps.api.app.services.orchestration.summary_generator import generate_summary_text
+from apps.api.app.services.billing.enforcement import get_enforcement_enabled
 from apps.api.app.services.billing.wallet import WalletService, get_wallet_service
 from apps.api.app.services.tools.permissions import get_permitted_tool_names
 from apps.api.app.utils.decimal_format import format_decimal
@@ -201,7 +202,7 @@ async def create_turn(
     manual_tag_selected_agents: list[RoomAgent] = []
     orchestrator_selected_agents: list[RoomAgent] = []
     settings = get_settings()
-    if settings.credit_enforcement_enabled:
+    if get_enforcement_enabled(settings.credit_enforcement_enabled):
         wallet = await wallet_service.get_or_create_wallet(db, user_id=user_id)
         wallet_balance = wallet.balance if wallet.balance is not None else Decimal("0")
         if wallet_balance <= Decimal("0"):
@@ -355,6 +356,7 @@ async def create_turn(
     tool_event_entries: list[tuple[str | None, tuple[ToolCallRecord, ...]]] = []
     turn_status = "completed"
     last_debit_balance: Decimal | None = None
+    summary_used_fallback = False
 
     for selected_agent in selected_agents:
         if selected_agent is None:
@@ -493,6 +495,7 @@ async def create_turn(
             gateway=llm_gateway,
             model_alias=settings.summarizer_model_alias,
         )
+        summary_used_fallback = generated.used_fallback
         structure = await extract_summary_structure(
             summary_text=generated.summary_text,
             gateway=llm_gateway,
@@ -624,5 +627,6 @@ async def create_turn(
         overflow_rejected=False,
         balance_after=balance_after,
         low_balance=low_balance,
+        summary_used_fallback=summary_used_fallback,
         created_at=turn.created_at,
     )
