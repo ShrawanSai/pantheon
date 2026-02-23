@@ -280,6 +280,7 @@ class UsersRoutesTests(unittest.TestCase):
         self.assertEqual(len(body["transactions"]), 1)
         self.assertEqual(body["transactions"][0]["id"], own_tx_id)
         self.assertEqual(body["transactions"][0]["kind"], "debit")
+        self.assertIsNone(body["transactions"][0]["initiated_by"])
 
     def test_get_transactions_pagination(self) -> None:
         user_id = f"user-{uuid4()}"

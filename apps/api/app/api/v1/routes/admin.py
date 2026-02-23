@@ -19,6 +19,7 @@ from apps.api.app.schemas.admin import (
     AdminPricingUpdate,
     AdminTransactionRead,
     AdminUsageBreakdownItem,
+    AdminUsageDailyBucket,
     AdminUsageSummaryRead,
     AdminWalletRead,
 )
@@ -89,6 +90,7 @@ async def patch_pricing_multiplier(
 async def get_usage_summary(
     user_id: str | None = Query(default=None),
     model_alias: str | None = Query(default=None),
+    bucket: str | None = Query(default=None),
     from_date: date | None = Query(default=None),
     to_date: date | None = Query(default=None),
     _: dict[str, str] = Depends(require_admin),
@@ -126,6 +128,20 @@ async def get_usage_summary(
     breakdown_query = breakdown_query.group_by(LlmCallEvent.model_alias).order_by(LlmCallEvent.model_alias.asc())
     breakdown_rows = (await db.execute(breakdown_query)).all()
 
+    daily_rows: list[tuple[date, int, Decimal]] = []
+    if bucket == "day":
+        daily_query = select(
+            func.date(LlmCallEvent.created_at),
+            func.count(LlmCallEvent.id),
+            func.coalesce(func.sum(LlmCallEvent.credits_burned), 0),
+        )
+        if conditions:
+            daily_query = daily_query.where(*conditions)
+        daily_query = daily_query.group_by(func.date(LlmCallEvent.created_at)).order_by(
+            func.date(LlmCallEvent.created_at).asc()
+        )
+        daily_rows = (await db.execute(daily_query)).all()
+
     return AdminUsageSummaryRead(
         total_credits_burned=format_decimal(total_credits),
         total_llm_calls=total_calls,
@@ -139,6 +155,14 @@ async def get_usage_summary(
                 credits_burned=format_decimal(Decimal(str(row[2]))),
             )
             for row in breakdown_rows
+        ],
+        daily=[
+            AdminUsageDailyBucket(
+                date=row[0],
+                call_count=int(row[1]),
+                credits_burned=format_decimal(Decimal(str(row[2]))),
+            )
+            for row in daily_rows
         ],
     )
 
@@ -164,6 +188,7 @@ async def get_wallet_for_user(
             id=row.id,
             kind=row.kind,
             amount=format_decimal(Decimal(str(row.amount))),
+            initiated_by=row.initiated_by,
             note=row.note,
             created_at=row.created_at,
         )
@@ -180,17 +205,16 @@ async def get_wallet_for_user(
 async def grant_wallet_credits(
     user_id: str,
     payload: AdminGrantRequest,
-    _: dict[str, str] = Depends(require_admin),
+    admin_user: dict[str, str] = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
     wallet_service: WalletService = Depends(get_wallet_service),
 ) -> AdminGrantResponse:
-    if payload.amount <= 0.0:
-        raise HTTPException(status_code=400, detail="Amount must be greater than zero.")
     result = await wallet_service.stage_grant(
         db=db,
         user_id=user_id,
         amount=payload.amount,
         note=payload.note,
+        initiated_by=admin_user["user_id"],
     )
     await db.commit()
     return AdminGrantResponse(

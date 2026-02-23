@@ -191,6 +191,14 @@ class AdminWalletRoutesTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json(), {"detail": "Admin access required."})
 
+    def test_grant_zero_amount_rejected(self) -> None:
+        self._seed_wallet_with_transactions()
+        response = self.client.post(
+            f"/api/v1/admin/wallets/{self.target_user_id}/grant",
+            json={"amount": 0.0},
+        )
+        self.assertEqual(response.status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -81,6 +81,7 @@ class WalletService:
         amount: float,
         note: str | None = None,
         reference_id: str | None = None,
+        initiated_by: str | None = None,
     ) -> DebitResult:
         grant_amount = Decimal(str(max(amount, 0.0)))
         wallet = await self.get_or_create_wallet(db, user_id=user_id)
@@ -97,6 +98,7 @@ class WalletService:
                 user_id=user_id,
                 amount=grant_amount,
                 kind="grant",
+                initiated_by=initiated_by,
                 reference_id=reference_id,
                 note=note,
             )

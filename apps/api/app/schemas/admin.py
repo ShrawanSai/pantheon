@@ -44,6 +44,15 @@ class AdminUsageSummaryRead(BaseModel):
     from_date: date | None = None
     to_date: date | None = None
     breakdown: list[AdminUsageBreakdownItem]
+    daily: list["AdminUsageDailyBucket"] = []
+
+
+class AdminUsageDailyBucket(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    date: date
+    credits_burned: str
+    call_count: int
 
 
 class AdminTransactionRead(BaseModel):
@@ -52,6 +61,7 @@ class AdminTransactionRead(BaseModel):
     id: str
     kind: str
     amount: str
+    initiated_by: str | None
     note: str | None
     created_at: datetime
 
@@ -67,7 +77,7 @@ class AdminWalletRead(BaseModel):
 class AdminGrantRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    amount: float = Field(le=10_000.0)
+    amount: float = Field(gt=0.0, le=10_000.0)
     note: str | None = None
 
 

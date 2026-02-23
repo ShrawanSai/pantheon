@@ -34,6 +34,7 @@ from apps.api.app.db.models import (
 )
 from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.auth import get_current_user
+from apps.api.app.core.config import get_settings
 from apps.api.app.main import app
 from apps.api.app.services.llm.gateway import GatewayRequest, GatewayResponse, GatewayUsage, get_llm_gateway
 from apps.api.app.services.orchestration.mode_executor import (
@@ -249,6 +250,12 @@ class SessionTurnRoutesTests(unittest.TestCase):
         self.fake_manager_gateway.calls.clear()
         self.fake_manager_gateway.response_text = "not json"
         self.fake_usage_recorder.records.clear()
+        os.environ.pop("CREDIT_ENFORCEMENT_ENABLED", None)
+        get_settings.cache_clear()
+
+    def tearDown(self) -> None:
+        os.environ.pop("CREDIT_ENFORCEMENT_ENABLED", None)
+        get_settings.cache_clear()
 
     def _seed_room(
         self,
@@ -503,6 +510,52 @@ class SessionTurnRoutesTests(unittest.TestCase):
         body = turn_response.json()
         self.assertTrue(body["low_balance"])
         self.assertIsNotNone(body["balance_after"])
+
+    def test_turn_rejected_when_enforcement_enabled_and_zero_balance(self) -> None:
+        os.environ["CREDIT_ENFORCEMENT_ENABLED"] = "true"
+        get_settings.cache_clear()
+        self.addCleanup(lambda: (os.environ.pop("CREDIT_ENFORCEMENT_ENABLED", None), get_settings.cache_clear()))
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Enforcement Enabled Room",
+        )
+        self._seed_wallet(user_id="primary-user", balance=Decimal("0.0"))
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek")
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        turn_response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "This should be blocked."},
+        )
+        self.assertEqual(turn_response.status_code, 402)
+        self.assertEqual(
+            turn_response.json(),
+            {"detail": "Insufficient credits. Please top up your account."},
+        )
+
+    def test_turn_allowed_when_enforcement_disabled_and_zero_balance(self) -> None:
+        os.environ["CREDIT_ENFORCEMENT_ENABLED"] = "false"
+        get_settings.cache_clear()
+        self.addCleanup(lambda: (os.environ.pop("CREDIT_ENFORCEMENT_ENABLED", None), get_settings.cache_clear()))
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Enforcement Disabled Room",
+        )
+        self._seed_wallet(user_id="primary-user", balance=Decimal("0.0"))
+        self._seed_agent(room_id=room_id, agent_key="researcher", model_alias="deepseek")
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        turn_response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "This should still proceed."},
+        )
+        self.assertEqual(turn_response.status_code, 201)
 
     def test_create_second_turn_increments_turn_index_and_message_count(self) -> None:
         self.fake_gateway.calls.clear()

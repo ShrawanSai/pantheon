@@ -201,6 +201,14 @@ async def create_turn(
     manual_tag_selected_agents: list[RoomAgent] = []
     orchestrator_selected_agents: list[RoomAgent] = []
     settings = get_settings()
+    if settings.credit_enforcement_enabled:
+        wallet = await wallet_service.get_or_create_wallet(db, user_id=user_id)
+        wallet_balance = wallet.balance if wallet.balance is not None else Decimal("0")
+        if wallet_balance <= Decimal("0"):
+            raise HTTPException(
+                status_code=402,
+                detail="Insufficient credits. Please top up your account.",
+            )
 
     if room.current_mode in {"manual", "tag"}:
         tagged_keys = _extract_tagged_agent_keys(payload.message)

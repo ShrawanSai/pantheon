@@ -86,6 +86,7 @@ async def get_my_transactions(
             id=row.id,
             kind=row.kind,
             amount=format_decimal(Decimal(str(row.amount))),
+            initiated_by=row.initiated_by,
             note=row.note,
             reference_id=row.reference_id,
             created_at=row.created_at,

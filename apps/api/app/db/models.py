@@ -302,6 +302,7 @@ class CreditTransaction(Base):
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    initiated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     reference_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     note: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

@@ -297,6 +297,45 @@ class AdminPricingRoutesTests(unittest.TestCase):
         self.assertEqual(body["breakdown"][0]["model_alias"], "deepseek")
         self.assertEqual(body["breakdown"][0]["call_count"], 1)
 
+    def test_usage_summary_daily_bucket(self) -> None:
+        self._seed_usage_event(
+            user_id=self.admin_user_id,
+            model_alias="deepseek",
+            credits_burned=Decimal("0.5000"),
+            output_tokens=40,
+            created_at=datetime(2026, 2, 20, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        self._seed_usage_event(
+            user_id=self.admin_user_id,
+            model_alias="deepseek",
+            credits_burned=Decimal("0.7000"),
+            output_tokens=50,
+            created_at=datetime(2026, 2, 21, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        response = self.client.get(
+            "/api/v1/admin/usage/summary?bucket=day&from_date=2026-02-20&to_date=2026-02-21"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(len(body["daily"]), 2)
+        self.assertEqual(body["daily"][0]["date"], "2026-02-20")
+        self.assertEqual(body["daily"][0]["call_count"], 1)
+        self.assertEqual(body["daily"][1]["date"], "2026-02-21")
+        self.assertEqual(body["daily"][1]["call_count"], 1)
+
+    def test_usage_summary_no_bucket_daily_empty(self) -> None:
+        self._seed_usage_event(
+            user_id=self.admin_user_id,
+            model_alias="deepseek",
+            credits_burned=Decimal("0.5000"),
+            output_tokens=40,
+            created_at=datetime(2026, 2, 20, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        response = self.client.get("/api/v1/admin/usage/summary")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["daily"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
