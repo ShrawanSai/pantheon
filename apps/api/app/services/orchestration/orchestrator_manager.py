@@ -5,10 +5,15 @@ import re
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
+from typing import Protocol
 
-from apps.api.app.db.models import Agent
-from apps.api.app.services.llm.gateway import GatewayMessage, GatewayRequest, GatewayResponse, LlmGateway
+from apps.api.app.services.llm.gateway import GatewayMessage, GatewayRequest, LlmGateway
 
+class RoutableAgent(Protocol):
+    @property
+    def agent_key(self) -> str | None: ...
+    @property
+    def role_prompt(self) -> str: ...
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,7 +57,7 @@ class OrchestratorRoundDecision:
 
 
 def _build_manager_system_prompt(
-    agents: list[Agent],
+    agents: list[RoutableAgent],
     prior_round_outputs: list[tuple[str, str]] | None = None,
 ) -> str:
     lines = [
@@ -130,7 +135,7 @@ async def generate_orchestrator_synthesis(
 
 
 async def route_turn(
-    agents: list[Agent],
+    agents: list[RoutableAgent],
     user_input: str,
     gateway: LlmGateway,
     manager_model_alias: str,
