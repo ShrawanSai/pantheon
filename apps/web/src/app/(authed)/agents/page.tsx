@@ -11,10 +11,24 @@ import { ApiError } from "@/lib/api/client";
 
 type CreateAgentFormState = {
   name: string;
-  provider: "openrouter";
   modelAlias: string;
   rolePrompt: string;
+  toolPermissions: string[];
 };
+
+const AVAILABLE_MODELS: Array<{ value: string; label: string }> = [
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "qwen", label: "Qwen" },
+  { value: "llama", label: "Llama" },
+  { value: "free", label: "Free" },
+  { value: "gpt_oss", label: "GPT OSS" },
+  { value: "premium", label: "Premium" }
+];
+
+const AVAILABLE_TOOLS: Array<{ value: string; label: string; description: string }> = [
+  { value: "search", label: "Web Search", description: "Allow this agent to use Tavily web search." },
+  { value: "file_read", label: "File Read", description: "Allow this agent to read uploaded files in room scope." }
+];
 
 function slugify(value: string): string {
   const base = value
@@ -50,9 +64,9 @@ export default function AgentsPage() {
   const [actionMessage, setActionMessage] = useState("");
   const [form, setForm] = useState<CreateAgentFormState>({
     name: "",
-    provider: "openrouter",
     modelAlias: "deepseek",
-    rolePrompt: ""
+    rolePrompt: "",
+    toolPermissions: []
   });
 
   const agentsQuery = useQuery({
@@ -77,7 +91,7 @@ export default function AgentsPage() {
         name: trimmedName,
         model_alias: trimmedModel,
         role_prompt: form.rolePrompt.trim(),
-        tool_permissions: []
+        tool_permissions: form.toolPermissions
       });
     },
     onMutate: async () => {
@@ -92,7 +106,7 @@ export default function AgentsPage() {
         name: form.name || "Untitled Agent",
         model_alias: form.modelAlias || "deepseek",
         role_prompt: form.rolePrompt,
-        tool_permissions: [],
+        tool_permissions: form.toolPermissions,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
@@ -110,7 +124,7 @@ export default function AgentsPage() {
     },
     onSuccess: () => {
       setCreateOpen(false);
-      setForm({ name: "", provider: "openrouter", modelAlias: "deepseek", rolePrompt: "" });
+      setForm({ name: "", modelAlias: "deepseek", rolePrompt: "", toolPermissions: [] });
       setActionMessage("Agent created successfully.");
     },
     onSettled: () => {
@@ -185,6 +199,9 @@ export default function AgentsPage() {
                 <span className="rounded-md bg-[--accent]/20 px-2 py-1 text-xs font-medium">{agent.model_alias}</span>
               </div>
               <p className="mt-2 text-xs text-[--text-muted]">Provider: OpenRouter</p>
+              <p className="mt-1 text-xs text-[--text-muted]">
+                Tools: {agent.tool_permissions.length > 0 ? agent.tool_permissions.join(", ") : "none"}
+              </p>
               <p className="mt-1 text-xs text-[--text-muted]">Created: {formatDate(agent.created_at)}</p>
               <div className="mt-4 flex justify-end">
                 <Button type="button" variant="ghost" onClick={() => setDeleteTarget(agent)}>
@@ -218,24 +235,18 @@ export default function AgentsPage() {
           </label>
 
           <label className="grid gap-1 text-sm">
-            <span className="text-[--text-muted]">Provider</span>
-            <select
-              className="h-10 rounded-md border border-[--border] bg-[--bg-base] px-3 text-[--text-primary]"
-              value={form.provider}
-              onChange={(event) => setForm((prev) => ({ ...prev, provider: event.target.value as "openrouter" }))}
-            >
-              <option value="openrouter">OpenRouter</option>
-            </select>
-          </label>
-
-          <label className="grid gap-1 text-sm">
             <span className="text-[--text-muted]">Model</span>
-            <input
+            <select
               className="h-10 rounded-md border border-[--border] bg-[--bg-base] px-3 text-[--text-primary]"
               value={form.modelAlias}
               onChange={(event) => setForm((prev) => ({ ...prev, modelAlias: event.target.value }))}
-              placeholder="deepseek"
-            />
+            >
+              {AVAILABLE_MODELS.map((model) => (
+                <option key={model.value} value={model.value}>
+                  {model.label}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label className="grid gap-1 text-sm">
@@ -247,6 +258,34 @@ export default function AgentsPage() {
               placeholder="You are a careful research assistant..."
             />
           </label>
+
+          <fieldset className="grid gap-2 rounded-md border border-[--border] bg-[--bg-base] p-3">
+            <legend className="px-1 text-sm text-[--text-muted]">Tools</legend>
+            {AVAILABLE_TOOLS.map((tool) => {
+              const checked = form.toolPermissions.includes(tool.value);
+              return (
+                <label key={tool.value} className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={checked}
+                    onChange={(event) => {
+                      setForm((prev) => {
+                        if (event.target.checked) {
+                          return { ...prev, toolPermissions: [...prev.toolPermissions, tool.value] };
+                        }
+                        return { ...prev, toolPermissions: prev.toolPermissions.filter((value) => value !== tool.value) };
+                      });
+                    }}
+                  />
+                  <span>
+                    <span className="font-medium">{tool.label}</span>
+                    <span className="block text-xs text-[--text-muted]">{tool.description}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </fieldset>
 
           {formError ? <p className="text-sm text-red-300">{formError}</p> : null}
 
