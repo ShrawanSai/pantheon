@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { Modal } from "@/components/common/modal";
@@ -9,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
 import { createRoom, deleteRoom, listRooms, type RoomMode, type RoomRead } from "@/lib/api/rooms";
 
-type RoomUiMode = "chat" | "task" | "mixed";
+type RoomUiMode = "solo" | "team" | "auto";
 
 type CreateRoomFormState = {
   name: string;
@@ -17,16 +18,22 @@ type CreateRoomFormState = {
 };
 
 const ROOM_MODE_LABELS: Record<RoomMode, string> = {
-  manual: "chat",
-  roundtable: "task",
-  orchestrator: "mixed"
+  manual: "Solo Chat",
+  roundtable: "Team Discussion",
+  orchestrator: "Auto Best Answer"
+};
+
+const ROOM_MODE_DESCRIPTIONS: Record<RoomUiMode, string> = {
+  solo: "One primary agent replies each turn, like a normal chat.",
+  team: "A team of agents replies in sequence so you get multiple perspectives.",
+  auto: "A manager coordinates specialists and returns one consolidated answer."
 };
 
 function mapUiModeToApiMode(mode: RoomUiMode): RoomMode {
-  if (mode === "chat") {
+  if (mode === "solo") {
     return "manual";
   }
-  if (mode === "task") {
+  if (mode === "team") {
     return "roundtable";
   }
   return "orchestrator";
@@ -46,7 +53,7 @@ export default function RoomsPage() {
   const [deleteTarget, setDeleteTarget] = useState<RoomRead | null>(null);
   const [form, setForm] = useState<CreateRoomFormState>({
     name: "",
-    uiMode: "chat"
+    uiMode: "solo"
   });
   const [formError, setFormError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
@@ -97,7 +104,7 @@ export default function RoomsPage() {
     },
     onSuccess: () => {
       setCreateOpen(false);
-      setForm({ name: "", uiMode: "chat" });
+      setForm({ name: "", uiMode: "solo" });
       setActionMessage("Room created successfully.");
     },
     onSettled: () => {
@@ -171,7 +178,13 @@ export default function RoomsPage() {
                 </span>
               </div>
               <p className="mt-2 text-xs text-[--text-muted]">Created: {formatDate(room.created_at)}</p>
-              <div className="mt-4 flex justify-end">
+              <div className="mt-4 flex justify-end gap-2">
+                <Link
+                  href={`/rooms/${room.id}`}
+                  className="inline-flex h-10 items-center justify-center rounded-md border border-[--border] bg-transparent px-4 py-2 text-sm font-medium text-[--text-primary] transition-colors hover:bg-[--bg-elevated]"
+                >
+                  Open
+                </Link>
                 <Button type="button" variant="ghost" onClick={() => setDeleteTarget(room)}>
                   Delete
                 </Button>
@@ -209,10 +222,11 @@ export default function RoomsPage() {
               value={form.uiMode}
               onChange={(event) => setForm((prev) => ({ ...prev, uiMode: event.target.value as RoomUiMode }))}
             >
-              <option value="chat">chat</option>
-              <option value="task">task</option>
-              <option value="mixed">mixed</option>
+              <option value="solo">Solo Chat</option>
+              <option value="team">Team Discussion</option>
+              <option value="auto">Auto Best Answer</option>
             </select>
+            <span className="text-xs text-[--text-muted]">{ROOM_MODE_DESCRIPTIONS[form.uiMode]}</span>
           </label>
 
           {formError ? <p className="text-sm text-red-300">{formError}</p> : null}
