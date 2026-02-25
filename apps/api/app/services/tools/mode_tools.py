@@ -3,9 +3,8 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Any
 
-from langchain_core.tools import tool
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.app.services.tools.file_tool import FileReadTool
@@ -30,20 +29,12 @@ def _emit_telemetry(sink: TelemetrySink | None, telemetry: ToolInvocationTelemet
     sink(telemetry)
 
 
-def make_web_search_tool(
+def make_web_search_tool_execute(
     *,
-    user_id: str,
-    session_id: str,
-    turn_id: str,
-    agent_key: str | None,
-    room_id: str | None,
-    db: AsyncSession,
     search_tool: SearchTool,
     telemetry_sink: TelemetrySink | None = None,
-):
-    _ = (user_id, session_id, turn_id, agent_key, room_id, db)
-
-    @tool("search")
+) -> Callable[[str], Any]:
+    
     async def web_search(query: str) -> str:
         """Search the web for current information and recent facts."""
         started = time.monotonic()
@@ -83,20 +74,14 @@ def make_web_search_tool(
     return web_search
 
 
-def make_read_file_tool(
+def make_read_file_tool_execute(
     *,
-    user_id: str,
-    session_id: str,
-    turn_id: str,
-    agent_key: str | None,
     room_id: str | None,
     db: AsyncSession,
     file_tool: FileReadTool,
     telemetry_sink: TelemetrySink | None = None,
-):
-    _ = (user_id, session_id, turn_id, agent_key)
+) -> Callable[[str], Any]:
 
-    @tool("file_read")
     async def read_file(file_id: str) -> str:
         """Read an uploaded file by file id and return parsed content."""
         started = time.monotonic()

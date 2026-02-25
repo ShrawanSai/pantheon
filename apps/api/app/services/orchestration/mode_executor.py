@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import inspect
 import logging
 import time
-from dataclasses import dataclass
-from functools import lru_cache
-from typing import Protocol, TypedDict
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol
+from collections.abc import Awaitable, Callable
 
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import END, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.app.services.llm.gateway import (
@@ -20,50 +17,57 @@ from apps.api.app.services.llm.gateway import (
     LlmGateway,
     get_llm_gateway,
 )
-from apps.api.app.services.tools.file_tool import (
-    FileReadTool,
-    TOOL_NAME as FILE_READ_TOOL_NAME,
-    get_file_read_tool,
+from apps.api.app.services.tools.file_tool import FileReadTool, get_file_read_tool
+from apps.api.app.services.tools.search_tool import SearchTool, get_search_tool
+from apps.api.app.services.tools.mode_tools import (
+    make_web_search_tool_execute,
+    make_read_file_tool_execute,
+    ToolInvocationTelemetry,
 )
-from apps.api.app.services.tools.search_tool import SearchTool, TOOL_NAME as SEARCH_TOOL_NAME, get_search_tool
+from apps.api.app.services.orchestration.orchestrator_manager import (
+    route_turn,
+    generate_orchestrator_synthesis,
+    evaluate_orchestrator_round,
+)
 
 _LOGGER = logging.getLogger(__name__)
-_POSTGRES_CHECKPOINTER_SETUP_DONE = False
 
+RoomMode = Literal["manual", "tag", "roundtable", "orchestrator", "standalone"]
 
-class TurnExecutionState(TypedDict, total=False):
+EventSink = Callable[[str, dict], Awaitable[None]]
+
+@dataclass
+class ActiveAgent:
+    agent_id: str | None
+    agent_key: str | None
+    name: str
     model_alias: str
-    messages: list[GatewayMessage]
+    role_prompt: str
+    tool_permissions: tuple[str, ...]
+
+@dataclass
+class TurnExecutionState:
+    session_id: str
+    turn_index: int
+    user_input: str
+    room_mode: RoomMode
+    active_agents: list[ActiveAgent]
+    primary_context_messages: list[GatewayMessage]
     max_output_tokens: int
-    provider_model: str
-    text: str
-    usage_input_tokens_fresh: int
-    usage_input_tokens_cached: int
-    usage_output_tokens: int
-    usage_total_tokens: int
-    tool_query: str | None
-    room_id: str
-    file_id_trigger: str | None
-    tool_events: list[dict[str, object]]
+    room_id: str | None = None
 
-
-@dataclass(frozen=True)
-class TurnExecutionInput:
-    model_alias: str
-    messages: list[GatewayMessage]
-    max_output_tokens: int
-    thread_id: str
-    allowed_tool_names: tuple[str, ...] = ()
-    room_id: str = ""
-
-
-@dataclass(frozen=True)
-class TurnExecutionOutput:
-    text: str
-    provider_model: str
-    usage: GatewayUsage
-    tool_calls: tuple["ToolCallRecord", ...] = ()
-
+    current_round: int = 1
+    total_invocations: int = 0
+    specialist_outputs: list[tuple[str, str]] = field(default_factory=list)
+    current_status: Literal["running", "partial", "completed", "failed"] = "running"
+    
+    final_synthesis: str | None = None
+    
+    # Tracking
+    usage_entries: list[tuple[str | None, str, str, int, int, int, int]] = field(default_factory=list)
+    tool_trace_entries: list[tuple[ActiveAgent, tuple[ToolCallRecord, ...]]] = field(default_factory=list)
+    assistant_entries: list[tuple[ActiveAgent, str]] = field(default_factory=list)
+    per_round_entries: list[list[tuple[ActiveAgent, str]]] = field(default_factory=list)
 
 @dataclass(frozen=True)
 class ToolCallRecord:
@@ -76,10 +80,15 @@ class ToolCallRecord:
 
 
 class TurnExecutor(Protocol):
-    async def run_turn(self, db: AsyncSession, payload: TurnExecutionInput) -> TurnExecutionOutput: ...
+    async def run_turn(
+        self, 
+        db: AsyncSession, 
+        state: TurnExecutionState,
+        event_sink: EventSink | None = None
+    ) -> TurnExecutionState: ...
 
 
-class LangGraphModeExecutor:
+class PurePythonModeExecutor:
     def __init__(
         self,
         llm_gateway: LlmGateway,
@@ -89,276 +98,328 @@ class LangGraphModeExecutor:
         self._llm_gateway = llm_gateway
         self._search_tool = search_tool or get_search_tool()
         self._file_read_tool = file_read_tool or get_file_read_tool()
-        self._graphs: dict[tuple[str, ...], object] = {}
 
-    def _extract_search_query(self, messages: list[GatewayMessage]) -> str | None:
-        user_messages = [message.content.strip() for message in messages if message.role == "user" and message.content.strip()]
-        for latest in reversed(user_messages):
-            lowered = latest.lower()
-            if lowered.startswith("search:"):
-                query = latest.split(":", 1)[1].strip()
-                return query or None
-            if lowered.startswith("search for "):
-                query = latest[len("search for ") :].strip()
-                return query or None
-        return None
+    async def _invoke_agent(
+        self, 
+        state: TurnExecutionState, 
+        agent: ActiveAgent, 
+        base_messages: list[GatewayMessage], 
+        db: AsyncSession,
+        event_sink: EventSink | None = None
+    ) -> tuple[str, bool]:
+        telemetry_records: list[ToolInvocationTelemetry] = []
+        
+        local_tools = {}
+        if "search" in agent.tool_permissions and self._search_tool:
+            local_tools["search"] = make_web_search_tool_execute(
+                search_tool=self._search_tool,
+                telemetry_sink=telemetry_records.append,
+            )
+        if "file_read" in agent.tool_permissions and self._file_read_tool:
+            local_tools["file_read"] = make_read_file_tool_execute(
+                room_id=state.room_id,
+                db=db,
+                file_tool=self._file_read_tool,
+                telemetry_sink=telemetry_records.append,
+            )
+            
+        messages = list(base_messages)
+        loop_limit = 4
+        
+        try:
+            for _ in range(loop_limit):
+                req = GatewayRequest(
+                    model_alias=agent.model_alias,
+                    messages=messages,
+                    max_output_tokens=state.max_output_tokens,
+                    allowed_tools=agent.tool_permissions
+                )
+                
+                # If tools are permitted, just use generate to ensure tool_calls are cleanly extracted.
+                # If streaming is requested and no tools, use stream mode.
+                if agent.tool_permissions or not event_sink:
+                    response = await self._llm_gateway.generate(req)
+                    state.usage_entries.append((
+                        agent.agent_id,
+                        agent.model_alias,
+                        response.provider_model,
+                        response.usage.input_tokens_fresh,
+                        response.usage.input_tokens_cached,
+                        response.usage.output_tokens,
+                        response.usage.total_tokens
+                    ))
 
-    def _extract_file_id(self, messages: list[GatewayMessage]) -> str | None:
-        user_messages = [message.content.strip() for message in messages if message.role == "user" and message.content.strip()]
-        for latest in reversed(user_messages):
-            if latest.lower().startswith("file:"):
-                file_id = latest.split(":", 1)[1].strip()
-                return file_id or None
-        return None
+                    if not response.tool_calls:
+                        tool_records = self._convert_telemetry(telemetry_records)
+                        if tool_records:
+                            state.tool_trace_entries.append((agent, tool_records))
+                        if event_sink:
+                            await event_sink("chunk", {"delta": f"{agent.name}: {response.text}"})
+                        return response.text, True
+                        
+                    messages.append(GatewayMessage(role="assistant", content=response.text, tool_calls=response.tool_calls))
+                    
+                    for tc in response.tool_calls:
+                        tc_id = tc["id"]
+                        fn_name = tc["function"]["name"]
+                        fn_args = tc["function"]["arguments"]
+                        
+                        try:
+                            args_dict = json.loads(fn_args)
+                        except json.JSONDecodeError:
+                            args_dict = {}
 
-    def _compile_graph(self, allowed_tools: set[str], db: AsyncSession | None = None):
-        async def call_model(state: TurnExecutionState) -> TurnExecutionState:
-            response = await self._llm_gateway.generate(
-                GatewayRequest(
-                    model_alias=state["model_alias"],
-                    messages=state["messages"],
-                    max_output_tokens=state["max_output_tokens"],
+                        if event_sink:
+                            await event_sink("tool_start", {"tool": fn_name, "args": args_dict})
+
+                        if fn_name in local_tools:
+                            try:
+                                result_str = await local_tools[fn_name](**args_dict)
+                            except Exception as e:
+                                result_str = f"Tool Error: {str(e)}"
+                        else:
+                            result_str = f"ToolError: Unknown tool {fn_name}"
+                            
+                        if event_sink:
+                            await event_sink("tool_end", {"tool": fn_name, "result": result_str})
+
+                        messages.append(GatewayMessage(role="tool", content=result_str, tool_call_id=tc_id))
+                else:
+                    # Native streaming chunk delivery (no tools)
+                    stream_ctx = await self._llm_gateway.stream(req)
+                    output_parts = []
+                    is_first_chunk = True
+                    async for delta in stream_ctx.chunks:
+                        output_parts.append(delta)
+                        if is_first_chunk:
+                            await event_sink("chunk", {"delta": f"{agent.name}: "})
+                            is_first_chunk = False
+                        await event_sink("chunk", {"delta": delta})
+                            
+                    text_out = "".join(output_parts)
+                    usage_obj = await stream_ctx.usage_future
+                    provider_model = await stream_ctx.provider_model_future
+
+                    state.usage_entries.append((
+                        agent.agent_id,
+                        agent.model_alias,
+                        provider_model,
+                        usage_obj.input_tokens_fresh,
+                        usage_obj.input_tokens_cached,
+                        usage_obj.output_tokens,
+                        usage_obj.total_tokens
+                    ))
+                    return text_out, True
+                    
+            text_out = "Agent iteration limit exceeded due to too many tool calls."
+            return text_out, False
+            
+        except Exception as exc:
+            _LOGGER.exception("Agent %s failed during invocation", agent.name)
+            error_msg = f"[[agent_error]] type={exc.__class__.__name__} message={str(exc)}"
+            if event_sink:
+                await event_sink("chunk", {"delta": f"{agent.name}: {error_msg}"})
+            return error_msg, False
+
+    def _convert_telemetry(self, telemetry: list[ToolInvocationTelemetry]) -> tuple[ToolCallRecord, ...]:
+        rows: list[ToolCallRecord] = []
+        for index, row in enumerate(telemetry, start=1):
+            rows.append(
+                ToolCallRecord(
+                    tool_name=row.tool_name,
+                    input_json=row.input_json,
+                    output_json=row.output_json,
+                    status=row.status,
+                    latency_ms=row.latency_ms,
+                    tool_call_id=f"tool_call_{index}",
                 )
             )
-            return {
-                "provider_model": response.provider_model,
-                "text": response.text,
-                "usage_input_tokens_fresh": response.usage.input_tokens_fresh,
-                "usage_input_tokens_cached": response.usage.input_tokens_cached,
-                "usage_output_tokens": response.usage.output_tokens,
-                "usage_total_tokens": response.usage.total_tokens,
-            }
+        return tuple(rows)
 
-        async def maybe_search(state: TurnExecutionState) -> TurnExecutionState:
-            query = state.get("tool_query")
-            if not query:
-                return {}
-            started = time.monotonic()
-            try:
-                results = await self._search_tool.search(query=query, max_results=5)
-                latency_ms = int((time.monotonic() - started) * 1000)
-                lines: list[str] = []
-                for item in results:
-                    title = item.title or "(untitled)"
-                    url = item.url or "(no-url)"
-                    snippet = item.snippet or ""
-                    lines.append(f"- {title} | {url} | {snippet}")
-                tool_text = "\n".join(lines) if lines else "- No search results returned."
-                enriched_messages = [
-                    *state["messages"],
-                    GatewayMessage(
-                        role="system",
-                        content=f"Tool({SEARCH_TOOL_NAME}) results for query '{query}':\n{tool_text}",
-                    ),
-                ]
-                tool_event = {
-                    "tool_name": SEARCH_TOOL_NAME,
-                    "input_json": json.dumps({"query": query}),
-                    "output_json": json.dumps({"result_count": len(results)}),
-                    "status": "success",
-                    "latency_ms": latency_ms,
-                }
-                existing_events = state.get("tool_events") or []
-                return {"messages": enriched_messages, "tool_events": [*existing_events, tool_event]}
-            except Exception as exc:
-                latency_ms = int((time.monotonic() - started) * 1000)
-                tool_event = {
-                    "tool_name": SEARCH_TOOL_NAME,
-                    "input_json": json.dumps({"query": query}),
-                    "output_json": json.dumps({"error": str(exc)}),
-                    "status": "error",
-                    "latency_ms": latency_ms,
-                }
-                existing_events = state.get("tool_events") or []
-                return {"tool_events": [*existing_events, tool_event]}
+    async def run_turn(
+        self, 
+        db: AsyncSession, 
+        state: TurnExecutionState,
+        event_sink: EventSink | None = None
+    ) -> TurnExecutionState:
+        if state.room_mode in ("manual", "standalone", "tag"):
+            await self._execute_manual(db, state, event_sink)
+        elif state.room_mode == "roundtable":
+            await self._execute_roundtable(db, state, event_sink)
+        elif state.room_mode == "orchestrator":
+            await self._execute_orchestrator(db, state, event_sink)
+        return state
 
-        async def maybe_file_read(state: TurnExecutionState) -> TurnExecutionState:
-            file_id = state.get("file_id_trigger")
-            if not file_id:
-                return {}
-            room_id = state.get("room_id") or ""
-            started = time.monotonic()
-            try:
-                if db is None:
-                    raise RuntimeError("DB session unavailable for file_read tool.")
-                result = await self._file_read_tool.read(file_id=file_id, room_id=room_id, db=db)
-            except Exception as exc:
-                latency_ms = int((time.monotonic() - started) * 1000)
-                tool_event = {
-                    "tool_name": FILE_READ_TOOL_NAME,
-                    "input_json": json.dumps({"file_id": file_id}),
-                    "output_json": json.dumps({"error": str(exc)}),
-                    "status": "error",
-                    "latency_ms": latency_ms,
-                }
-                existing_events = state.get("tool_events") or []
-                return {"tool_events": [*existing_events, tool_event]}
+    async def _execute_manual(
+        self, 
+        db: AsyncSession, 
+        state: TurnExecutionState,
+        event_sink: EventSink | None = None
+    ):
+        agent = state.active_agents[0]
+        base_messages = [
+            GatewayMessage(role="system", content=f"Agent role: {agent.role_prompt}"),
+            *state.primary_context_messages
+        ]
+        text, success = await self._invoke_agent(state, agent, base_messages, db, event_sink)
+        
+        state.assistant_entries.append((agent, text))
+        state.per_round_entries.append([(agent, text)])
+        state.specialist_outputs.append((agent.name, text))
+        if not success:
+            state.current_status = "partial"
 
-            latency_ms = int((time.monotonic() - started) * 1000)
-            if result.status == "completed":
-                enriched_messages = [
-                    *state["messages"],
-                    GatewayMessage(
-                        role="system",
-                        content=f"Tool({FILE_READ_TOOL_NAME}) content for file '{file_id}':\n{result.content or ''}",
-                    ),
-                ]
-                tool_event = {
-                    "tool_name": FILE_READ_TOOL_NAME,
-                    "input_json": json.dumps({"file_id": file_id}),
-                    "output_json": json.dumps({"chars": len(result.content or "")}),
-                    "status": "success",
-                    "latency_ms": latency_ms,
-                }
-                existing_events = state.get("tool_events") or []
-                return {"messages": enriched_messages, "tool_events": [*existing_events, tool_event]}
-
-            tool_event = {
-                "tool_name": FILE_READ_TOOL_NAME,
-                "input_json": json.dumps({"file_id": file_id}),
-                "output_json": json.dumps({"error": result.error, "result_status": result.status}),
-                "status": "error",
-                "latency_ms": latency_ms,
-            }
-            existing_events = state.get("tool_events") or []
-            return {"tool_events": [*existing_events, tool_event]}
-
-        graph = StateGraph(TurnExecutionState)
-        has_search = SEARCH_TOOL_NAME in allowed_tools
-        has_file_read = FILE_READ_TOOL_NAME in allowed_tools
-        if has_search and has_file_read:
-            graph.add_node("maybe_search", maybe_search)
-            graph.add_node("maybe_file_read", maybe_file_read)
-            graph.add_node("call_model", call_model)
-            graph.set_entry_point("maybe_search")
-            graph.add_edge("maybe_search", "maybe_file_read")
-            graph.add_edge("maybe_file_read", "call_model")
-            graph.add_edge("call_model", END)
-        elif has_search:
-            graph.add_node("maybe_search", maybe_search)
-            graph.add_node("call_model", call_model)
-            graph.set_entry_point("maybe_search")
-            graph.add_edge("maybe_search", "call_model")
-            graph.add_edge("call_model", END)
-        elif has_file_read:
-            graph.add_node("maybe_file_read", maybe_file_read)
-            graph.add_node("call_model", call_model)
-            graph.set_entry_point("maybe_file_read")
-            graph.add_edge("maybe_file_read", "call_model")
-            graph.add_edge("call_model", END)
-        else:
-            graph.add_node("call_model", call_model)
-            graph.set_entry_point("call_model")
-            graph.add_edge("call_model", END)
-        return graph.compile(checkpointer=_build_checkpointer())
-
-    def _get_compiled_graph(self, allowed_tools: set[str], db: AsyncSession | None = None):
-        if FILE_READ_TOOL_NAME in allowed_tools:
-            return self._compile_graph(allowed_tools, db=db)
-        key = tuple(sorted(allowed_tools))
-        graph = self._graphs.get(key)
-        if graph is None:
-            graph = self._compile_graph(allowed_tools, db=None)
-            self._graphs[key] = graph
-        return graph
-
-    async def run_turn(self, db: AsyncSession, payload: TurnExecutionInput) -> TurnExecutionOutput:
-        allowed_tools = {name.strip().lower() for name in payload.allowed_tool_names if name and name.strip()}
-        graph = self._get_compiled_graph(allowed_tools, db=db)
-        result = await graph.ainvoke(
-            {
-                "model_alias": payload.model_alias,
-                "messages": payload.messages,
-                "max_output_tokens": payload.max_output_tokens,
-                "tool_query": self._extract_search_query(payload.messages),
-                "room_id": payload.room_id,
-                "file_id_trigger": self._extract_file_id(payload.messages),
-            },
-            config={"configurable": {"thread_id": payload.thread_id}},
-        )
-        raw_tool_events = result.get("tool_events") or []
-        tool_calls = tuple(
-            ToolCallRecord(
-                tool_name=str(event["tool_name"]),
-                input_json=str(event["input_json"]),
-                output_json=str(event["output_json"]),
-                status=str(event["status"]),
-                latency_ms=int(event["latency_ms"]) if event.get("latency_ms") is not None else None,
-            )
-            for event in raw_tool_events
-        )
-        return TurnExecutionOutput(
-            text=result["text"],
-            provider_model=result["provider_model"],
-            usage=GatewayUsage(
-                input_tokens_fresh=result["usage_input_tokens_fresh"],
-                input_tokens_cached=result["usage_input_tokens_cached"],
-                output_tokens=result["usage_output_tokens"],
-                total_tokens=result["usage_total_tokens"],
-            ),
-            tool_calls=tool_calls,
-        )
-
-
-def _build_checkpointer():
-    # Week 4 baseline: MemorySaver for local/test determinism.
-    # Postgres checkpointer wiring is enabled when langgraph-postgres package is available.
-    try:
-        from langgraph.checkpoint.postgres import PostgresSaver  # type: ignore
-        from langgraph.checkpoint.base import BaseCheckpointSaver  # type: ignore
-        from apps.api.app.db.session import _raw_database_pool_url  # local helper import
-
-        checkpointer = PostgresSaver.from_conn_string(_raw_database_pool_url())
-        if not isinstance(checkpointer, BaseCheckpointSaver):
-            _LOGGER.warning(
-                "Postgres checkpointer factory returned unsupported object type (%s); using MemorySaver.",
-                type(checkpointer).__name__,
-            )
-            return MemorySaver()
-        _setup_checkpointer_once(checkpointer)
-        _LOGGER.info("Using Postgres checkpointer for LangGraph turn execution.")
-        return checkpointer
-    except Exception as exc:
-        _LOGGER.warning(
-            "Postgres checkpointer unavailable; falling back to MemorySaver. reason=%s",
-            exc,
-        )
-        return MemorySaver()
-
-
-def _setup_checkpointer_once(checkpointer: object) -> None:
-    global _POSTGRES_CHECKPOINTER_SETUP_DONE
-    if _POSTGRES_CHECKPOINTER_SETUP_DONE:
-        return
-    setup_fn = getattr(checkpointer, "setup", None)
-    if not callable(setup_fn):
-        _LOGGER.warning("Postgres checkpointer has no setup() method; skipping setup step.")
-        _POSTGRES_CHECKPOINTER_SETUP_DONE = True
-        return
-    result = setup_fn()
-    if inspect.isawaitable(result):
-        try:
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                _LOGGER.warning("Skipping async checkpointer setup because event loop is already running.")
+    async def _execute_roundtable(
+        self, 
+        db: AsyncSession, 
+        state: TurnExecutionState,
+        event_sink: EventSink | None = None
+    ):
+        shared_history = []
+        for agent in state.active_agents:
+            base_messages = [
+                GatewayMessage(role="system", content=f"Room mode: roundtable\nAgent role: {agent.role_prompt}"),
+                *state.primary_context_messages,
+                *shared_history
+            ]
+            
+            text, success = await self._invoke_agent(state, agent, base_messages, db, event_sink)
+            state.assistant_entries.append((agent, text))
+            state.specialist_outputs.append((agent.name, text))
+            
+            if success:
+                shared_history.append(GatewayMessage(role="assistant", content=f"[{agent.name}]: {text}"))
             else:
-                loop.run_until_complete(result)
-        except RuntimeError:
-            asyncio.run(result)
-    _POSTGRES_CHECKPOINTER_SETUP_DONE = True
-    _LOGGER.info("Postgres checkpointer setup step completed.")
+                state.current_status = "partial"
+                
+        state.per_round_entries.append(state.assistant_entries)
 
+    async def _execute_orchestrator(
+        self, 
+        db: AsyncSession, 
+        state: TurnExecutionState,
+        event_sink: EventSink | None = None
+    ):
+        from apps.api.app.core.config import get_settings
+        settings = get_settings()
+        
+        manager_alias = settings.orchestrator_manager_model_alias
+        max_depth = max(settings.orchestrator_max_depth, 1)
+        max_cap = max(settings.orchestrator_max_specialist_invocations, 1)
+        
+        while state.current_round <= max_depth and state.total_invocations < max_cap:
+            if event_sink:
+                await event_sink("round_start", {"round": state.current_round})
 
-@lru_cache(maxsize=1)
-def _get_cached_mode_executor():
-    from apps.api.app.services.orchestration.react_executor import ReactAgentExecutor
+            prior_outputs = state.specialist_outputs if state.current_round > 1 else None
+            
+            routing = await route_turn(
+                agents=state.active_agents, 
+                user_input=state.user_input,
+                gateway=self._llm_gateway,
+                manager_model_alias=manager_alias,
+                prior_round_outputs=prior_outputs,
+            )
+            
+            by_key = {a.agent_key.lower(): a for a in state.active_agents if a.agent_key}
+            round_assignments = [by_key[k.lower()] for k in routing.selected_agent_keys if k.lower() in by_key]
+            if not round_assignments:
+                round_assignments = [state.active_agents[0]]
+                
+            remaining = max_cap - state.total_invocations
+            round_assignments = round_assignments[:min(3, remaining)]
+            if not round_assignments:
+                break
+                
+            round_outputs = []
+            
+            for agent in round_assignments:
+                base_messages = [
+                    GatewayMessage(role="system", content=f"Agent role: {agent.role_prompt}"),
+                    *state.primary_context_messages,
+                ]
+                
+                text, success = await self._invoke_agent(state, agent, base_messages, db, event_sink)
+                round_outputs.append((agent, text))
+                if success:
+                    state.specialist_outputs.append((agent.name, text))
+                state.total_invocations += 1
+                
+            state.per_round_entries.append(round_outputs)
+            
+            if event_sink:
+                await event_sink("round_end", {"round": state.current_round})
 
-    return ReactAgentExecutor(
-        llm_gateway=get_llm_gateway(),
-        search_tool=get_search_tool(),
-        file_read_tool=get_file_read_tool(),
-    )
+            if not any(not text.startswith("[[agent_error]]") for _, text in round_outputs):
+                break
+                
+            if state.current_round < max_depth and state.total_invocations < max_cap:
+                eval_decision = await evaluate_orchestrator_round(
+                    gateway=self._llm_gateway,
+                    manager_model_alias=manager_alias,
+                    user_input=state.user_input,
+                    all_round_outputs=state.specialist_outputs,
+                    current_round=state.current_round,
+                )
+                if not eval_decision.should_continue:
+                    break
+                    
+            state.current_round += 1
 
+        if state.specialist_outputs:
+            if event_sink:
+                await event_sink("chunk", {"delta": "\n\n---\n\nManager synthesis:\n"})
+            try:
+                # Always stream synthesis if event sinks exist, as it has no tools.
+                if event_sink:
+                    synth_stream = await self._llm_gateway.stream(
+                        GatewayRequest(
+                            model_alias=manager_alias,
+                            messages=build_orchestrator_synthesis_messages(
+                                user_input=state.user_input,
+                                specialist_outputs=state.specialist_outputs,
+                            ),
+                            max_output_tokens=state.max_output_tokens,
+                        )
+                    )
+                    synth_parts = []
+                    async for delta in synth_stream.chunks:
+                        synth_parts.append(delta)
+                        await event_sink("chunk", {"delta": delta})
+                        
+                    synthesis_result_text = "".join(synth_parts).strip()
+                    usage_obj = await synth_stream.usage_future
+                    provider_model = await synth_stream.provider_model_future
+                else:
+                    synthesis_result = await generate_orchestrator_synthesis(
+                        gateway=self._llm_gateway,
+                        manager_model_alias=manager_alias,
+                        user_input=state.user_input,
+                        specialist_outputs=state.specialist_outputs,
+                        max_output_tokens=state.max_output_tokens,
+                    )
+                    synthesis_result_text = synthesis_result.text.strip()
+                    provider_model = synthesis_result.response.provider_model
+                    usage_obj = synthesis_result.response.usage
+
+                state.final_synthesis = synthesis_result_text
+                state.usage_entries.append((
+                    None,
+                    manager_alias,
+                    provider_model,
+                    usage_obj.input_tokens_fresh,
+                    usage_obj.input_tokens_cached,
+                    usage_obj.output_tokens,
+                    usage_obj.total_tokens
+                ))
+            except Exception as exc:
+                state.current_status = "partial"
+                err_msg = f"[[manager_synthesis_error]] {exc}"
+                state.final_synthesis = err_msg
+                if event_sink:
+                    await event_sink("chunk", {"delta": err_msg})
+
+_cached_executor = PurePythonModeExecutor(llm_gateway=get_llm_gateway())
 
 def get_mode_executor():
-    return _get_cached_mode_executor()
+    return _cached_executor

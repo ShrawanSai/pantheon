@@ -39,8 +39,7 @@ from apps.api.app.dependencies.auth import get_current_user
 from apps.api.app.main import app
 from apps.api.app.services.llm.gateway import GatewayUsage, get_llm_gateway
 from apps.api.app.services.orchestration.mode_executor import (
-    TurnExecutionInput,
-    TurnExecutionOutput,
+    TurnExecutionState,
     get_mode_executor,
 )
 
@@ -69,23 +68,28 @@ class FakeManagerGateway:
 
 @dataclass
 class FakeModeExecutor:
-    calls: list[TurnExecutionInput] = field(default_factory=list)
+    calls: list[TurnExecutionState] = field(default_factory=list)
 
-    async def run_turn(self, db: AsyncSession, payload: TurnExecutionInput) -> TurnExecutionOutput:
+    async def run_turn(self, db: AsyncSession, state: TurnExecutionState, event_sink=None) -> TurnExecutionState:
         _ = db
-        self.calls.append(payload)
-        user_texts = [msg.content for msg in payload.messages if msg.role == "user"]
-        response_text = " | ".join(user_texts) if user_texts else "ok"
-        return TurnExecutionOutput(
-            text=response_text,
-            provider_model="fake/standalone-model",
-            usage=GatewayUsage(
-                input_tokens_fresh=20,
-                input_tokens_cached=0,
-                output_tokens=10,
-                total_tokens=30,
-            ),
-        )
+        self.calls.append(state)
+        # Mocking an agent response
+        if state.active_agents:
+            content = "ok"
+            if state.primary_context_messages:
+                content += "".join(f" {m.content}" for m in state.primary_context_messages)
+            state.assistant_entries.append((state.active_agents[0], content))
+            state.usage_entries.append((state.active_agents[0].agent_id, state.active_agents[0].model_alias, "fake/standalone-model", 20, 0, 10, 30))
+            
+            if state.room_mode == "orchestrator":
+                from apps.api.app.services.orchestration.mode_executor import ActiveAgent
+                fake_manager = ActiveAgent(None, "manager", "Manager", "fake", "fake", ())
+                state.assistant_entries.append((fake_manager, "Manager ok"))
+        else:
+            state.final_synthesis = "ok"
+        
+        state.current_status = "completed"
+        return state
 
 
 class StandaloneSessionsTests(unittest.TestCase):

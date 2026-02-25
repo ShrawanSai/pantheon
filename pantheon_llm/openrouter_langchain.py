@@ -26,7 +26,7 @@ SUPPORTED_LLMS: dict[str, LlmSpec] = {
     ),
     "deepseek": LlmSpec(
         alias="deepseek",
-        model_id="deepseek/deepseek-v3.1-terminus",
+        model_id="google/gemini-2.5-flash",
         tier="standard",
     ),
     "gpt_oss": LlmSpec(alias="gpt_oss", model_id="openai/gpt-oss-120b", tier="advanced"),

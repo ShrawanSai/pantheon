@@ -101,7 +101,6 @@ class ContextManager:
 
         summary_triggered = False
         prune_triggered = False
-        generated_summary_text: str | None = None
         summary_from_message_id: str | None = None
         summary_to_message_id: str | None = None
 
@@ -119,57 +118,33 @@ class ContextManager:
                 summary_triggered = True
                 summary_from_message_id = summarizable[0].id
                 summary_to_message_id = summarizable[-1].id
-                summary_payload = "\n".join(f"[{item.role}] {item.content}" for item in summarizable)
-                # MVP stub: deterministic truncation summary only.
-                # Structured summary fields (facts/decisions/open questions/action items) are deferred.
-                generated_summary_text = summary_payload[:1200]
                 working_history = working_history[summarize_cutoff:]
 
-        summary_messages = [ContextMessage(role=item.role, content=item.content) for item in working_history]
-        after_summary_messages = [*base_messages, *summary_messages, ContextMessage(role="user", content=user_input)]
-        if generated_summary_text:
-            after_summary_messages.insert(
-                len(system_messages),
-                ContextMessage(role="system", content=f"Session summary: {generated_summary_text}"),
-            )
-        estimated_after_summary = self.estimate_tokens(after_summary_messages)
+        current_history_messages = [ContextMessage(role=item.role, content=item.content) for item in working_history]
+        current_messages = [*base_messages, *current_history_messages, ContextMessage(role="user", content=user_input)]
+        estimated_after_summary = self.estimate_tokens(current_messages)
 
         if estimated_after_summary >= int(input_budget * self.prune_trigger_ratio):
             prune_triggered = True
-            pruned = list(working_history)
-            while pruned:
-                prune_index = next(
-                    (idx for idx, item in enumerate(pruned) if item.role == "assistant"),
-                    0,
-                )
-                pruned.pop(prune_index)
-                candidate_messages = [ContextMessage(role=item.role, content=item.content) for item in pruned]
-                candidate = [*base_messages, *candidate_messages, ContextMessage(role="user", content=user_input)]
-                if generated_summary_text:
-                    candidate.insert(
-                        len(system_messages),
-                        ContextMessage(role="system", content=f"Session summary: {generated_summary_text}"),
-                    )
-                if self.estimate_tokens(candidate) <= input_budget:
-                    working_history = pruned
+            while working_history:
+                working_history.pop(0)
+                current_history_messages = [ContextMessage(role=item.role, content=item.content) for item in working_history]
+                current_messages = [*base_messages, *current_history_messages, ContextMessage(role="user", content=user_input)]
+                if self.estimate_tokens(current_messages) <= input_budget:
                     break
+            
+            estimated_after_prune = self.estimate_tokens(current_messages)
+            if estimated_after_prune > input_budget:
+                raise ContextBudgetExceeded(
+                    model_context_limit=model_limit,
+                    input_budget=input_budget,
+                    estimated_tokens=estimated_after_prune,
+                )
+        else:
+            estimated_after_prune = estimated_after_summary
 
         final_history_messages = [ContextMessage(role=item.role, content=item.content) for item in working_history]
         final_messages = [*base_messages, *final_history_messages, ContextMessage(role="user", content=user_input)]
-        if generated_summary_text:
-            final_messages.insert(
-                len(system_messages),
-                ContextMessage(role="system", content=f"Session summary: {generated_summary_text}"),
-            )
-
-        estimated_after_prune = self.estimate_tokens(final_messages)
-        overflow_rejected = estimated_after_prune > input_budget
-        if overflow_rejected:
-            raise ContextBudgetExceeded(
-                model_context_limit=model_limit,
-                input_budget=input_budget,
-                estimated_tokens=estimated_after_prune,
-            )
 
         return ContextPreparation(
             messages=final_messages,
@@ -183,7 +158,7 @@ class ContextManager:
             summary_triggered=summary_triggered,
             prune_triggered=prune_triggered,
             overflow_rejected=False,
-            generated_summary_text=generated_summary_text,
+            generated_summary_text=None,
             summary_from_message_id=summary_from_message_id,
             summary_to_message_id=summary_to_message_id,
         )

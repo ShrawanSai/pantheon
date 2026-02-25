@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from decimal import Decimal
 import logging
+import typing
 import re
 import time
 from datetime import datetime, timezone
@@ -53,16 +54,11 @@ from apps.api.app.services.orchestration.context_manager import (
     HistoryMessage,
 )
 from apps.api.app.services.orchestration.mode_executor import (
+    ActiveAgent,
     ToolCallRecord,
     TurnExecutor,
-    TurnExecutionInput,
+    TurnExecutionState,
     get_mode_executor,
-)
-from apps.api.app.services.orchestration.orchestrator_manager import (
-    build_orchestrator_synthesis_messages,
-    evaluate_orchestrator_round,
-    generate_orchestrator_synthesis,
-    route_turn,
 )
 from apps.api.app.services.orchestration.summary_extractor import extract_summary_structure
 from apps.api.app.services.orchestration.summary_generator import generate_summary_text
@@ -82,14 +78,7 @@ _TAG_PATTERN = re.compile(r"@([a-zA-Z0-9_]+)")
 _LOGGER = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class _SelectedAgent:
-    agent_id: str | None
-    agent_key: str | None
-    name: str
-    model_alias: str
-    role_prompt: str
-    tool_permissions: tuple[str, ...]
+# Removed _SelectedAgent, using ActiveAgent
 
 
 def _session_to_read(session: Session) -> SessionRead:
@@ -150,11 +139,11 @@ async def _get_owned_active_agent_or_404(db: AsyncSession, *, agent_id: str, use
     return agent
 
 
-def _room_agent_to_selected_agent(room_agent: RoomAgent) -> _SelectedAgent:
+def _room_agent_to_selected_agent(room_agent: RoomAgent) -> ActiveAgent:
     if room_agent.agent is None:
         raise HTTPException(status_code=500, detail="Room agent assignment missing linked agent.")
     linked = room_agent.agent
-    return _SelectedAgent(
+    return ActiveAgent(
         agent_id=linked.id,
         agent_key=linked.agent_key,
         name=linked.name,
@@ -164,8 +153,8 @@ def _room_agent_to_selected_agent(room_agent: RoomAgent) -> _SelectedAgent:
     )
 
 
-def _standalone_agent_to_selected_agent(agent: Agent) -> _SelectedAgent:
-    return _SelectedAgent(
+def _standalone_agent_to_selected_agent(agent: Agent) -> ActiveAgent:
+    return ActiveAgent(
         agent_id=agent.id,
         agent_key=agent.agent_key,
         name=agent.name,
@@ -444,8 +433,8 @@ async def create_turn(
     )
 
     room_agents: list[RoomAgent] = []
-    selected_agents: list[_SelectedAgent] = []
-    active_agent: _SelectedAgent | None = None
+    selected_agents: list[ActiveAgent] = []
+    active_agent: ActiveAgent | None = None
     turn_mode: str
 
     if room is not None:
@@ -564,275 +553,97 @@ async def create_turn(
     context_manager = _build_context_manager()
     next_turn_index = int(await db.scalar(select(func.max(Turn.turn_index)).where(Turn.session_id == session.id)) or 0)
 
-    share_same_turn_outputs = turn_mode == "roundtable"
-    prior_roundtable_outputs: list[GatewayMessage] = []
-    assistant_entries: list[tuple[_SelectedAgent, str]] = []
-    per_round_entries: list[list[tuple[_SelectedAgent, str]]] = []
-    usage_entries: list[tuple[str | None, str, str, int, int, int, int]] = []
-    tool_event_entries: list[tuple[str | None, tuple[ToolCallRecord, ...]]] = []
-    tool_trace_entries: list[tuple[_SelectedAgent, tuple[ToolCallRecord, ...]]] = []
-    turn_status = "completed"
-    last_debit_balance: Decimal | None = None
     summary_used_fallback = False
-    primary_context = None
-    orch_round_num = 0
-    orch_total_invocations = 0
-    orch_all_specialist_outputs: list[tuple[str, str]] = []
+    last_debit_balance: Decimal | None = None
 
-    def _build_history_messages_for_agent(current_agent_key: str | None) -> list[HistoryMessage]:
-        if room is not None:
-            shared = [item for item in history_rows if item.visibility == "shared"]
-            private = [
-                item
-                for item in history_rows
-                if item.visibility == "private" and item.agent_key == current_agent_key
-            ]
-            private_limit = max(settings.agent_private_context_turns_keep, 0) * 2
-            if private_limit > 0 and len(private) > private_limit:
-                private = private[-private_limit:]
-            combined = sorted(shared + private, key=lambda item: (item.created_at, item.id))
-        else:
-            combined = [item for item in history_rows if item.visibility == "shared"]
-
-        output: list[HistoryMessage] = []
-        for message in combined:
-            if message.role not in {"user", "assistant", "tool"}:
-                continue
-            role = "user" if message.role == "user" else "assistant"
-            content = message.content
-            if (
-                room is not None
-                and message.role == "assistant"
-                and message.visibility == "shared"
-                and current_agent_key is not None
-                and message.source_agent_key is not None
-                and message.source_agent_key != current_agent_key
-            ):
-                content = f"[{message.agent_name or message.source_agent_key}]: {message.content}"
-
-            output.append(
-                HistoryMessage(
-                    id=message.id,
-                    role=role,
-                    content=content,
-                    turn_id=message.turn_id,
-                )
-            )
-        return output
-
-    async def _invoke_selected_agent(selected_agent: _SelectedAgent) -> tuple[str, bool]:
-        nonlocal primary_context, turn_status
-        selected_agent_name = selected_agent.name
-        selected_agent_alias = payload.model_alias_override or selected_agent.model_alias
-        selected_agent_role = selected_agent.role_prompt
-        selected_agent_id = selected_agent.agent_id
-        selected_agent_key = selected_agent.agent_key
-        selected_agent_tools = selected_agent.tool_permissions
-
-        if room is not None and turn_mode == "roundtable":
-            system_messages = [
-                ContextMessage(role="system", content=f"Room mode: {turn_mode}"),
-                ContextMessage(role="system", content=f"Room goal: {room.goal or 'No goal specified.'}"),
-            ]
-        elif room is not None:
-            system_messages = [
-                ContextMessage(role="system", content=f"Room mode: {turn_mode}"),
-                ContextMessage(role="system", content=f"Room goal: {room.goal or 'No goal specified.'}"),
-                ContextMessage(role="system", content=f"Agent role: {selected_agent_role}"),
-            ]
-        else:
-            system_messages = [
-                ContextMessage(role="system", content="Session mode: standalone"),
-                ContextMessage(role="system", content=f"Agent role: {selected_agent_role}"),
-            ]
-
-        history_messages = _build_history_messages_for_agent(selected_agent_key)
-
-        try:
-            context = context_manager.prepare(
-                model_context_limit=settings.context_default_model_limit,
-                system_messages=system_messages,
-                history_messages=history_messages,
-                latest_summary_text=latest_summary.summary_text if latest_summary else None,
-                turn_count_since_last_summary=turn_count_since_summary,
-                user_input=payload.message,
-            )
-        except ContextBudgetExceeded as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "context_budget_exceeded",
-                    "message": "Input exceeds session context budget. Shorten input or start a new session.",
-                    "input_budget": exc.input_budget,
-                    "estimated_tokens": exc.estimated_tokens,
-                    "model_context_limit": exc.model_context_limit,
-                },
-            ) from exc
-
-        if primary_context is None:
-            primary_context = context
-
-        request_messages: list[GatewayMessage] = [
-            GatewayMessage(role="system", content=f"Agent role: {selected_agent_role}"),
-            *[GatewayMessage(role=item.role, content=item.content) for item in context.messages],
-            *prior_roundtable_outputs,
-        ]
-
-        try:
-            gateway_response = await mode_executor.run_turn(
-                db,
-                TurnExecutionInput(
-                    model_alias=selected_agent_alias,
-                    messages=request_messages,
-                    max_output_tokens=settings.context_max_output_tokens,
-                    thread_id=f"{session.id}:{next_turn_index + 1}:{selected_agent_name}",
-                    allowed_tool_names=selected_agent_tools,
-                    room_id=session.room_id or "",
-                ),
-            )
-            assistant_entries.append((selected_agent, gateway_response.text))
-            usage_entries.append(
-                (
-                    selected_agent_id,
-                    selected_agent_alias,
-                    gateway_response.provider_model,
-                    gateway_response.usage.input_tokens_fresh,
-                    gateway_response.usage.input_tokens_cached,
-                    gateway_response.usage.output_tokens,
-                    gateway_response.usage.total_tokens,
-                )
-            )
-            tool_event_entries.append((selected_agent_key, gateway_response.tool_calls))
-            tool_trace_entries.append((selected_agent, gateway_response.tool_calls))
-            if share_same_turn_outputs:
-                prior_roundtable_outputs.append(
-                    GatewayMessage(role="assistant", content=f"{selected_agent_name}: {gateway_response.text}")
-                )
-            return gateway_response.text, True
-        except Exception as exc:
-            turn_status = "partial"
-            error_content = (
-                f"[[agent_error]] agent={selected_agent_name} "
-                f"type={exc.__class__.__name__} message={str(exc) or 'execution_failed'}"
-            )
-            assistant_entries.append((selected_agent, error_content))
-            if share_same_turn_outputs:
-                prior_roundtable_outputs.append(
-                    GatewayMessage(role="assistant", content=f"{selected_agent_name}: {error_content}")
-                )
-            return error_content, False
-
-    if turn_mode == "orchestrator":
-        orch_max_depth = max(settings.orchestrator_max_depth, 1)
-        orch_max_cap = max(settings.orchestrator_max_specialist_invocations, 1)
-        while orch_round_num < orch_max_depth and orch_total_invocations < orch_max_cap:
-            orch_round_num += 1
-            prior_outputs_for_routing = orch_all_specialist_outputs if orch_round_num > 1 else None
-            routing = await route_turn(
-                agents=[assignment.agent for assignment in room_agents],
-                user_input=payload.message,
-                gateway=llm_gateway,
-                manager_model_alias=settings.orchestrator_manager_model_alias,
-                prior_round_outputs=prior_outputs_for_routing,
-            )
-            by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
-            round_assignments = [by_key[k.lower()] for k in routing.selected_agent_keys if k.lower() in by_key]
-            if not round_assignments:
-                round_assignments = [room_agents[0]]
-
-            remaining = orch_max_cap - orch_total_invocations
-            round_assignments = round_assignments[: min(3, remaining)]
-            if not round_assignments:
-                break
-
-            round_outputs: list[tuple[_SelectedAgent, str]] = []
-            for assignment in round_assignments:
-                selected_agent = _room_agent_to_selected_agent(assignment)
-                text_output, succeeded = await _invoke_selected_agent(selected_agent)
-                round_outputs.append((selected_agent, text_output))
-                if succeeded:
-                    orch_all_specialist_outputs.append((selected_agent.name, text_output))
-                orch_total_invocations += 1
-
-            per_round_entries.append(round_outputs)
-            if not any(not text.startswith("[[agent_error]]") for _, text in round_outputs):
-                _LOGGER.info("Stopping orchestrator loop for session %s: round %d had no successful outputs.", session.id, orch_round_num)
-                break
-
-            if orch_round_num < orch_max_depth and orch_total_invocations < orch_max_cap:
-                eval_decision = await evaluate_orchestrator_round(
-                    gateway=llm_gateway,
-                    manager_model_alias=settings.orchestrator_manager_model_alias,
-                    user_input=payload.message,
-                    all_round_outputs=orch_all_specialist_outputs,
-                    current_round=orch_round_num,
-                )
-                if not eval_decision.should_continue:
-                    break
+    history_messages: list[HistoryMessage] = []
+    if room is not None:
+        combined = sorted(history_rows, key=lambda item: (item.created_at, item.id))
     else:
-        for selected_agent in selected_agents:
-            if selected_agent is None:
-                continue
-            text_output, _ = await _invoke_selected_agent(selected_agent)
-            per_round_entries.append([(selected_agent, text_output)])
+        combined = [item for item in history_rows if item.visibility == "shared"]
 
-    if primary_context is None:
+    for message in combined:
+        if message.role not in {"user", "assistant", "tool"}:
+            continue
+        role = "user" if message.role == "user" else "assistant"
+        content = message.content
+        if room is not None and message.role == "assistant" and message.visibility == "shared":
+            content = f"[{message.agent_name or message.source_agent_key}]: {message.content}"
+        history_messages.append(
+            HistoryMessage(
+                id=message.id,
+                role=role,
+                content=content,
+                turn_id=message.turn_id,
+            )
+        )
+
+    system_messages = []
+    if room is not None:
+        system_messages.append(ContextMessage(role="system", content=f"Room mode: {turn_mode}"))
+        if room.goal:
+            system_messages.append(ContextMessage(role="system", content=f"Room goal: {room.goal}"))
+    else:
+        system_messages.append(ContextMessage(role="system", content="Session mode: standalone"))
+
+    try:
+        primary_context = context_manager.prepare(
+            model_context_limit=settings.context_default_model_limit,
+            system_messages=system_messages,
+            history_messages=history_messages,
+            latest_summary_text=latest_summary.summary_text if latest_summary else None,
+            turn_count_since_last_summary=turn_count_since_summary,
+            user_input=payload.message,
+        )
+    except ContextBudgetExceeded as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "context_budget_exceeded",
+                "message": "Input exceeds session context budget. Shorten input or start a new session.",
+                "input_budget": exc.input_budget,
+                "estimated_tokens": exc.estimated_tokens,
+                "model_context_limit": exc.model_context_limit,
+            },
+        ) from exc
+
+    import typing
+    state = TurnExecutionState(
+        session_id=session.id,
+        turn_index=next_turn_index + 1,
+        user_input=payload.message,
+        room_mode=typing.cast(typing.Any, turn_mode),
+        active_agents=selected_agents,
+        primary_context_messages=[GatewayMessage(role=m.role, content=m.content) for m in primary_context.messages],
+        max_output_tokens=settings.context_max_output_tokens,
+        room_id=session.room_id,
+    )
+
+    state = await mode_executor.run_turn(db, state)
+
+    if not state.assistant_entries and not state.final_synthesis and state.current_status != "failed":
         raise HTTPException(status_code=422, detail="No executable agent found for this turn.")
 
-    manager_synthesis_text: str | None = None
-    if turn_mode == "orchestrator":
-        specialist_outputs = orch_all_specialist_outputs
-        if specialist_outputs:
-            try:
-                synthesis_result = await generate_orchestrator_synthesis(
-                    gateway=llm_gateway,
-                    manager_model_alias=settings.orchestrator_manager_model_alias,
-                    user_input=payload.message,
-                    specialist_outputs=specialist_outputs,
-                    max_output_tokens=settings.context_max_output_tokens,
-                )
-                if synthesis_result is not None:
-                    manager_synthesis_text = synthesis_result.text.strip()
-                    usage_entries.append(
-                        (
-                            None,
-                            settings.orchestrator_manager_model_alias,
-                            synthesis_result.response.provider_model,
-                            synthesis_result.response.usage.input_tokens_fresh,
-                            synthesis_result.response.usage.input_tokens_cached,
-                            synthesis_result.response.usage.output_tokens,
-                            synthesis_result.response.usage.total_tokens,
-                        )
-                    )
-            except Exception as exc:
-                turn_status = "partial"
-                _LOGGER.warning("Orchestrator synthesis failed for session %s: %s", session.id, exc)
-                manager_synthesis_text = (
-                    f"[[manager_synthesis_error]] type={exc.__class__.__name__} "
-                    f"message={str(exc) or 'synthesis_failed'}"
-                )
-        else:
-            _LOGGER.info("Skipping orchestrator synthesis for session %s: no specialist outputs.", session.id)
-
     model_alias_for_marker = model_alias
-    if turn_mode == "orchestrator" and usage_entries:
-        model_alias_for_marker = usage_entries[0][1]
-    multi_agent_mode = orch_total_invocations > 1 if turn_mode == "orchestrator" else len(selected_agents) > 1
+    if turn_mode == "orchestrator" and state.usage_entries:
+        model_alias_for_marker = state.usage_entries[0][1]
+    multi_agent_mode = state.total_invocations > 1 if turn_mode == "orchestrator" else len(selected_agents) > 1
     model_alias_marker = (
         "roundtable"
         if turn_mode == "roundtable"
         else ("multi-agent" if turn_mode == "orchestrator" and multi_agent_mode else model_alias_for_marker)
     )
-    if turn_mode == "orchestrator" and per_round_entries:
-        if len(per_round_entries) > 1:
+
+    if turn_mode == "orchestrator" and state.per_round_entries:
+        if len(state.per_round_entries) > 1:
             round_blocks: list[str] = []
-            for round_idx, round_entries in enumerate(per_round_entries, start=1):
+            for round_idx, round_entries in enumerate(state.per_round_entries, start=1):
                 lines = [f"[Round {round_idx}]"]
                 lines.extend(f"{entry_agent.name}: {content}" for entry_agent, content in round_entries)
                 round_blocks.append("\n".join(lines))
             assistant_output_text = "\n\n".join(round_blocks)
         else:
-            single_round = per_round_entries[0]
+            single_round = state.per_round_entries[0]
             assistant_output_text = (
                 "\n\n".join(f"{entry_agent.name}: {content}" for entry_agent, content in single_round)
                 if len(single_round) > 1
@@ -840,12 +651,12 @@ async def create_turn(
             )
     else:
         assistant_output_text = (
-            "\n\n".join([f"{entry_agent.name}: {content}" for entry_agent, content in assistant_entries])
+            "\n\n".join([f"{entry_agent.name}: {content}" for entry_agent, content in state.assistant_entries])
             if multi_agent_mode
-            else (assistant_entries[0][1] if assistant_entries else "")
+            else (state.assistant_entries[0][1] if state.assistant_entries else "")
         )
-    if manager_synthesis_text:
-        synthesis_block = f"Manager synthesis:\n{manager_synthesis_text}"
+    if state.final_synthesis:
+        synthesis_block = f"Manager synthesis:\n{state.final_synthesis}"
         assistant_output_text = (
             f"{assistant_output_text}\n\n---\n\n{synthesis_block}" if assistant_output_text else synthesis_block
         )
@@ -857,7 +668,7 @@ async def create_turn(
         mode=turn_mode,
         user_input=payload.message,
         assistant_output=assistant_output_text,
-        status=turn_status,
+        status=state.current_status,
     )
     db.add(turn)
     try:
@@ -882,7 +693,7 @@ async def create_turn(
         content=payload.message,
     )
     db.add(user_message)
-    for trace_agent, tool_calls in tool_trace_entries:
+    for trace_agent, tool_calls in state.tool_trace_entries:
         for tool_call in tool_calls:
             db.add(
                 Message(
@@ -913,7 +724,7 @@ async def create_turn(
                 )
             )
 
-    for entry_agent, entry_content in assistant_entries:
+    for entry_agent, entry_content in state.assistant_entries:
         db.add(
             Message(
                 id=str(uuid4()),
@@ -928,7 +739,7 @@ async def create_turn(
                 content=entry_content,
             )
         )
-    if manager_synthesis_text:
+    if state.final_synthesis:
         db.add(
             Message(
                 id=str(uuid4()),
@@ -940,34 +751,22 @@ async def create_turn(
                 source_agent_key="manager",
                 agent_name="Manager",
                 mode=turn_mode,
-                content=manager_synthesis_text,
+                content=state.final_synthesis,
             )
         )
 
-    if primary_context.generated_summary_text:
-        generated = await generate_summary_text(
-            raw_summary_text=primary_context.generated_summary_text,
-            gateway=llm_gateway,
-            model_alias=settings.summarizer_model_alias,
-        )
-        summary_used_fallback = generated.used_fallback
-        structure = await extract_summary_structure(
-            summary_text=generated.summary_text,
-            gateway=llm_gateway,
-            model_alias=settings.summarizer_model_alias,
-        )
-        summary = SessionSummary(
-            id=str(uuid4()),
-            session_id=session.id,
-            from_message_id=primary_context.summary_from_message_id,
-            to_message_id=primary_context.summary_to_message_id,
-            summary_text=generated.summary_text,
-            key_facts_json=json.dumps(structure.key_facts),
-            open_questions_json=json.dumps(structure.open_questions),
-            decisions_json=json.dumps(structure.decisions),
-            action_items_json=json.dumps(structure.action_items),
-        )
-        db.add(summary)
+    if primary_context.summary_triggered:
+        from arq import ArqRedis
+        redis_pool: ArqRedis | None = getattr(request.app.state, "arq_redis", None)
+        if redis_pool:
+            await redis_pool.enqueue_job(
+                "session_summary",
+                session.id,
+                primary_context.summary_from_message_id,
+                primary_context.summary_to_message_id,
+            )
+        else:
+            _LOGGER.warning("arq_redis not found in app state; skipping async summarization for session %s", session.id)
 
     audit = TurnContextAudit(
         id=str(uuid4()),
@@ -995,7 +794,7 @@ async def create_turn(
         usage_input_cached,
         usage_output,
         usage_total,
-    ) in usage_entries:
+    ) in state.usage_entries:
         oe_tokens = compute_oe_tokens(
             input_tokens_fresh=usage_input_fresh,
             input_tokens_cached=usage_input_cached,
@@ -1033,7 +832,7 @@ async def create_turn(
         )
         last_debit_balance = debit_result.new_balance
 
-    for agent_key, tool_calls in tool_event_entries:
+    for trace_agent, tool_calls in state.tool_trace_entries:
         for tool_call in tool_calls:
             db.add(
                 ToolCallEvent(
@@ -1042,7 +841,7 @@ async def create_turn(
                     room_id=session.room_id,
                     session_id=session.id,
                     turn_id=turn.id,
-                    agent_key=agent_key,
+                    agent_key=trace_agent.agent_key,
                     tool_name=tool_call.tool_name,
                     tool_input_json=tool_call.input_json,
                     tool_output_json=tool_call.output_json,
@@ -1099,6 +898,7 @@ async def create_turn_stream(
     llm_gateway: LlmGateway = Depends(get_llm_gateway),
     usage_recorder: UsageRecorder = Depends(get_usage_recorder),
     wallet_service: WalletService = Depends(get_wallet_service),
+    mode_executor: PurePythonModeExecutor = Depends(get_mode_executor),
 ) -> StreamingResponse:
     user_id = current_user["user_id"]
     settings = get_settings()
@@ -1108,8 +908,8 @@ async def create_turn_stream(
     )
 
     room_agents: list[RoomAgent] = []
-    selected_agents: list[_SelectedAgent] = []
-    active_agent: _SelectedAgent | None = None
+    selected_agents: list[ActiveAgent] = []
+    active_agent: ActiveAgent | None = None
     turn_mode: str
 
     if room is not None:
@@ -1273,257 +1073,113 @@ async def create_turn_stream(
         return output
 
     async def _stream_turn() -> AsyncIterator[str]:
-        prior_roundtable_outputs: list[GatewayMessage] = []
-        assistant_entries: list[tuple[_SelectedAgent, str]] = []
-        per_round_entries: list[list[tuple[_SelectedAgent, str]]] = []
-        usage_entries: list[tuple[str | None, str, str, int, int, int, int]] = []
-        turn_status = "completed"
-        primary_context = None
         summary_used_fallback = False
         last_debit_balance: Decimal | None = None
-        manager_synthesis_text: str | None = None
-        orch_round_num = 0
-        orch_total_invocations = 0
-        orch_all_specialist_outputs: list[tuple[str, str]] = []
 
-        async def _stream_agent(selected_agent: _SelectedAgent) -> tuple[str, bool, list[str]]:
-            nonlocal primary_context, turn_status
-            selected_agent_name = selected_agent.name
-            selected_agent_alias = payload.model_alias_override or selected_agent.model_alias
-            selected_agent_role = selected_agent.role_prompt
-            selected_agent_id = selected_agent.agent_id
-            selected_agent_key = selected_agent.agent_key
-            sse_events: list[str] = []
-
-            if room is not None and turn_mode == "roundtable":
-                system_messages = [
-                    ContextMessage(role="system", content=f"Room mode: {turn_mode}"),
-                    ContextMessage(role="system", content=f"Room goal: {room.goal or 'No goal specified.'}"),
-                ]
-            elif room is not None:
-                system_messages = [
-                    ContextMessage(role="system", content=f"Room mode: {turn_mode}"),
-                    ContextMessage(role="system", content=f"Room goal: {room.goal or 'No goal specified.'}"),
-                    ContextMessage(role="system", content=f"Agent role: {selected_agent_role}"),
-                ]
-            else:
-                system_messages = [
-                    ContextMessage(role="system", content="Session mode: standalone"),
-                    ContextMessage(role="system", content=f"Agent role: {selected_agent_role}"),
-                ]
-
-            history_messages = _build_history_messages_for_agent(selected_agent_key)
-            try:
-                context = context_manager.prepare(
-                    model_context_limit=settings.context_default_model_limit,
-                    system_messages=system_messages,
-                    history_messages=history_messages,
-                    latest_summary_text=latest_summary.summary_text if latest_summary else None,
-                    turn_count_since_last_summary=turn_count_since_summary,
-                    user_input=payload.message,
-                )
-            except ContextBudgetExceeded as exc:
-                raise HTTPException(
-                    status_code=422,
-                    detail={
-                        "code": "context_budget_exceeded",
-                        "message": "Input exceeds session context budget. Shorten input or start a new session.",
-                        "input_budget": exc.input_budget,
-                        "estimated_tokens": exc.estimated_tokens,
-                        "model_context_limit": exc.model_context_limit,
-                    },
-                ) from exc
-
-            if primary_context is None:
-                primary_context = context
-
-            request_messages: list[GatewayMessage] = [
-                GatewayMessage(role="system", content=f"Agent role: {selected_agent_role}"),
-                *[GatewayMessage(role=item.role, content=item.content) for item in context.messages],
-                *prior_roundtable_outputs,
-            ]
-            output_parts: list[str] = []
-
-            try:
-                stream_ctx: StreamingContext = await llm_gateway.stream(
-                    GatewayRequest(
-                        model_alias=selected_agent_alias,
-                        messages=request_messages,
-                        max_output_tokens=settings.context_max_output_tokens,
-                    )
-                )
-                if turn_mode == "orchestrator" or len(selected_agents) > 1:
-                    sse_events.append(_sse_event({"type": "chunk", "delta": f"{selected_agent_name}: "}))
-                async for delta in stream_ctx.chunks:
-                    output_parts.append(delta)
-                    sse_events.append(_sse_event({"type": "chunk", "delta": delta}))
-
-                streamed_text = "".join(output_parts)
-                usage = await stream_ctx.usage_future
-                provider_model = await stream_ctx.provider_model_future
-
-                assistant_entries.append((selected_agent, streamed_text))
-                usage_entries.append(
-                    (
-                        selected_agent_id,
-                        selected_agent_alias,
-                        provider_model,
-                        usage.input_tokens_fresh,
-                        usage.input_tokens_cached,
-                        usage.output_tokens,
-                        usage.total_tokens,
-                    )
-                )
-                if share_same_turn_outputs:
-                    prior_roundtable_outputs.append(
-                        GatewayMessage(role="assistant", content=f"{selected_agent_name}: {streamed_text}")
-                    )
-                return streamed_text, True, sse_events
-            except Exception as exc:
-                turn_status = "partial"
-                error_content = (
-                    f"[[agent_error]] agent={selected_agent_name} "
-                    f"type={exc.__class__.__name__} message={str(exc) or 'execution_failed'}"
-                )
-                assistant_entries.append((selected_agent, error_content))
-                sse_events.append(_sse_event({"type": "chunk", "delta": f"{selected_agent_name}: {error_content}"}))
-                if share_same_turn_outputs:
-                    prior_roundtable_outputs.append(
-                        GatewayMessage(role="assistant", content=f"{selected_agent_name}: {error_content}")
-                    )
-                return error_content, False, sse_events
-
-        if turn_mode == "orchestrator":
-            orch_max_depth = max(settings.orchestrator_max_depth, 1)
-            orch_max_cap = max(settings.orchestrator_max_specialist_invocations, 1)
-            while orch_round_num < orch_max_depth and orch_total_invocations < orch_max_cap:
-                orch_round_num += 1
-                yield _sse_event({"type": "round_start", "round": orch_round_num})
-
-                prior_outputs_for_routing = orch_all_specialist_outputs if orch_round_num > 1 else None
-                routing = await route_turn(
-                    agents=[assignment.agent for assignment in room_agents],
-                    user_input=payload.message,
-                    gateway=llm_gateway,
-                    manager_model_alias=settings.orchestrator_manager_model_alias,
-                    prior_round_outputs=prior_outputs_for_routing,
-                )
-                by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
-                round_assignments = [by_key[k.lower()] for k in routing.selected_agent_keys if k.lower() in by_key]
-                if not round_assignments:
-                    round_assignments = [room_agents[0]]
-
-                remaining = orch_max_cap - orch_total_invocations
-                round_assignments = round_assignments[: min(3, remaining)]
-                if not round_assignments:
-                    break
-
-                round_outputs: list[tuple[_SelectedAgent, str]] = []
-                for assignment in round_assignments:
-                    selected_agent = _room_agent_to_selected_agent(assignment)
-                    streamed_text, succeeded, events = await _stream_agent(selected_agent)
-                    for event in events:
-                        yield event
-                    round_outputs.append((selected_agent, streamed_text))
-                    if succeeded:
-                        orch_all_specialist_outputs.append((selected_agent.name, streamed_text))
-                    orch_total_invocations += 1
-
-                per_round_entries.append(round_outputs)
-                yield _sse_event({"type": "round_end", "round": orch_round_num})
-                if not any(not text.startswith("[[agent_error]]") for _, text in round_outputs):
-                    _LOGGER.info(
-                        "Stopping orchestrator stream loop for session %s: round %d had no successful outputs.",
-                        session.id,
-                        orch_round_num,
-                    )
-                    break
-
-                if orch_round_num < orch_max_depth and orch_total_invocations < orch_max_cap:
-                    eval_decision = await evaluate_orchestrator_round(
-                        gateway=llm_gateway,
-                        manager_model_alias=settings.orchestrator_manager_model_alias,
-                        user_input=payload.message,
-                        all_round_outputs=orch_all_specialist_outputs,
-                        current_round=orch_round_num,
-                    )
-                    if not eval_decision.should_continue:
-                        break
+        history_messages: list[HistoryMessage] = []
+        if room is not None:
+            combined = sorted(history_rows, key=lambda item: (item.created_at, item.id))
         else:
-            for selected_agent in selected_agents:
-                streamed_text, _, events = await _stream_agent(selected_agent)
-                for event in events:
-                    yield event
-                per_round_entries.append([(selected_agent, streamed_text)])
+            combined = [item for item in history_rows if item.visibility == "shared"]
 
-        if primary_context is None:
-            raise HTTPException(status_code=422, detail="No executable agent found for this turn.")
+        for message in combined:
+            if message.role not in {"user", "assistant", "tool"}:
+                continue
+            role = "user" if message.role == "user" else "assistant"
+            content = message.content
+            if room is not None and message.role == "assistant" and message.visibility == "shared":
+                content = f"[{message.agent_name or message.source_agent_key}]: {message.content}"
+            history_messages.append(
+                HistoryMessage(
+                    id=message.id,
+                    role=role,
+                    content=content,
+                    turn_id=message.turn_id,
+                )
+            )
 
-        if turn_mode == "orchestrator":
-            specialist_outputs = orch_all_specialist_outputs
-            if specialist_outputs:
-                yield _sse_event({"type": "chunk", "delta": "\n\n---\n\nManager synthesis:\n"})
-                try:
-                    synthesis_stream = await llm_gateway.stream(
-                        GatewayRequest(
-                            model_alias=settings.orchestrator_manager_model_alias,
-                            messages=build_orchestrator_synthesis_messages(
-                                user_input=payload.message,
-                                specialist_outputs=specialist_outputs,
-                            ),
-                            max_output_tokens=settings.context_max_output_tokens,
-                        )
-                    )
-                    synthesis_parts: list[str] = []
-                    async for delta in synthesis_stream.chunks:
-                        synthesis_parts.append(delta)
-                        yield _sse_event({"type": "chunk", "delta": delta})
+        system_messages = []
+        if room is not None:
+            system_messages.append(ContextMessage(role="system", content=f"Room mode: {turn_mode}"))
+            if room.goal:
+                system_messages.append(ContextMessage(role="system", content=f"Room goal: {room.goal}"))
+        else:
+            system_messages.append(ContextMessage(role="system", content="Session mode: standalone"))
 
-                    manager_synthesis_text = "".join(synthesis_parts).strip()
-                    synthesis_usage = await synthesis_stream.usage_future
-                    synthesis_provider_model = await synthesis_stream.provider_model_future
-                    usage_entries.append(
-                        (
-                            None,
-                            settings.orchestrator_manager_model_alias,
-                            synthesis_provider_model,
-                            synthesis_usage.input_tokens_fresh,
-                            synthesis_usage.input_tokens_cached,
-                            synthesis_usage.output_tokens,
-                            synthesis_usage.total_tokens,
-                        )
-                    )
-                except Exception as exc:
-                    turn_status = "partial"
-                    _LOGGER.warning("Orchestrator synthesis stream failed for session %s: %s", session.id, exc)
-                    manager_synthesis_text = (
-                        f"[[manager_synthesis_error]] type={exc.__class__.__name__} "
-                        f"message={str(exc) or 'synthesis_failed'}"
-                    )
-                    yield _sse_event({"type": "chunk", "delta": manager_synthesis_text})
-            else:
-                _LOGGER.info("Skipping orchestrator synthesis for session %s: no specialist outputs.", session.id)
+        try:
+            primary_context = context_manager.prepare(
+                model_context_limit=settings.context_default_model_limit,
+                system_messages=system_messages,
+                history_messages=history_messages,
+                latest_summary_text=latest_summary.summary_text if latest_summary else None,
+                turn_count_since_last_summary=turn_count_since_summary,
+                user_input=payload.message,
+            )
+        except ContextBudgetExceeded as exc:
+            yield _sse_event({
+                "type": "error", 
+                "message": "Input exceeds session context budget. Shorten input or start a new session."
+            })
+            return
 
-        model_alias = payload.model_alias_override or (active_agent.model_alias if active_agent else "deepseek")
+        import typing
+        import asyncio
+        
+        state = TurnExecutionState(
+            session_id=session.id,
+            turn_index=next_turn_index + 1,
+            user_input=payload.message,
+            room_mode=typing.cast(typing.Any, turn_mode),
+            active_agents=selected_agents,
+            primary_context_messages=[GatewayMessage(role=m.role, content=m.content) for m in primary_context.messages],
+            max_output_tokens=settings.context_max_output_tokens,
+            room_id=session.room_id,
+        )
+
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        
+        async def event_sink(event_type: str, data: dict) -> None:
+            await queue.put(_sse_event({"type": event_type, **data}))
+            
+        async def run_executor():
+            try:
+                await mode_executor.run_turn(db, state, event_sink)
+            except Exception as e:
+                _LOGGER.error("Stream executor failed: %s", e)
+            finally:
+                await queue.put(None)
+                
+        executor_task = asyncio.create_task(run_executor())
+        
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield item
+
+        await executor_task
+
+        model_alias = selected_agents[0].model_alias if selected_agents else "fake"
         model_alias_for_marker = model_alias
-        if turn_mode == "orchestrator" and usage_entries:
-            model_alias_for_marker = usage_entries[0][1]
-        multi_agent_mode = orch_total_invocations > 1 if turn_mode == "orchestrator" else len(selected_agents) > 1
+        if turn_mode == "orchestrator" and state.usage_entries:
+            model_alias_for_marker = state.usage_entries[0][1]
+        multi_agent_mode = state.total_invocations > 1 if turn_mode == "orchestrator" else len(selected_agents) > 1
         model_alias_marker = (
             "roundtable"
             if turn_mode == "roundtable"
             else ("multi-agent" if turn_mode == "orchestrator" and multi_agent_mode else model_alias_for_marker)
         )
-        if turn_mode == "orchestrator" and per_round_entries:
-            if len(per_round_entries) > 1:
+
+        if turn_mode == "orchestrator" and state.per_round_entries:
+            if len(state.per_round_entries) > 1:
                 round_blocks: list[str] = []
-                for round_idx, round_entries in enumerate(per_round_entries, start=1):
+                for round_idx, round_entries in enumerate(state.per_round_entries, start=1):
                     lines = [f"[Round {round_idx}]"]
                     lines.extend(f"{entry_agent.name}: {content}" for entry_agent, content in round_entries)
                     round_blocks.append("\n".join(lines))
                 assistant_output_text = "\n\n".join(round_blocks)
             else:
-                single_round = per_round_entries[0]
+                single_round = state.per_round_entries[0]
                 assistant_output_text = (
                     "\n\n".join(f"{entry_agent.name}: {content}" for entry_agent, content in single_round)
                     if len(single_round) > 1
@@ -1531,12 +1187,12 @@ async def create_turn_stream(
                 )
         else:
             assistant_output_text = (
-                "\n\n".join([f"{entry_agent.name}: {content}" for entry_agent, content in assistant_entries])
+                "\n\n".join([f"{entry_agent.name}: {content}" for entry_agent, content in state.assistant_entries])
                 if multi_agent_mode
-                else (assistant_entries[0][1] if assistant_entries else "")
+                else (state.assistant_entries[0][1] if state.assistant_entries else "")
             )
-        if manager_synthesis_text:
-            synthesis_block = f"Manager synthesis:\n{manager_synthesis_text}"
+        if state.final_synthesis:
+            synthesis_block = f"Manager synthesis:\n{state.final_synthesis}"
             assistant_output_text = (
                 f"{assistant_output_text}\n\n---\n\n{synthesis_block}" if assistant_output_text else synthesis_block
             )
@@ -1548,7 +1204,7 @@ async def create_turn_stream(
             mode=turn_mode,
             user_input=payload.message,
             assistant_output=assistant_output_text,
-            status=turn_status,
+            status=state.current_status,
         )
         db.add(turn)
         await db.flush()
@@ -1567,7 +1223,38 @@ async def create_turn_stream(
                 content=payload.message,
             )
         )
-        for entry_agent, entry_content in assistant_entries:
+        for trace_agent, tool_calls in state.tool_trace_entries:
+            for tool_call in tool_calls:
+                db.add(
+                    Message(
+                        id=str(uuid4()),
+                        turn_id=turn.id,
+                        session_id=session.id,
+                        role="assistant",
+                        visibility="private",
+                        agent_key=trace_agent.agent_key,
+                        source_agent_key=trace_agent.agent_key,
+                        agent_name=trace_agent.name,
+                        mode=turn_mode,
+                        content=f"{tool_call.tool_name}({tool_call.input_json})",
+                    )
+                )
+                db.add(
+                    Message(
+                        id=str(uuid4()),
+                        turn_id=turn.id,
+                        session_id=session.id,
+                        role="tool",
+                        visibility="private",
+                        agent_key=trace_agent.agent_key,
+                        source_agent_key=trace_agent.agent_key,
+                        agent_name=trace_agent.name,
+                        mode=turn_mode,
+                        content=tool_call.output_json,
+                    )
+                )
+
+        for entry_agent, entry_content in state.assistant_entries:
             db.add(
                 Message(
                     id=str(uuid4()),
@@ -1582,7 +1269,7 @@ async def create_turn_stream(
                     content=entry_content,
                 )
             )
-        if manager_synthesis_text:
+        if state.final_synthesis:
             db.add(
                 Message(
                     id=str(uuid4()),
@@ -1594,35 +1281,23 @@ async def create_turn_stream(
                     source_agent_key="manager",
                     agent_name="Manager",
                     mode=turn_mode,
-                    content=manager_synthesis_text,
+                    content=state.final_synthesis,
                 )
             )
 
-        if primary_context.generated_summary_text:
-            generated = await generate_summary_text(
-                raw_summary_text=primary_context.generated_summary_text,
-                gateway=llm_gateway,
-                model_alias=settings.summarizer_model_alias,
-            )
-            summary_used_fallback = generated.used_fallback
-            structure = await extract_summary_structure(
-                summary_text=generated.summary_text,
-                gateway=llm_gateway,
-                model_alias=settings.summarizer_model_alias,
-            )
-            db.add(
-                SessionSummary(
-                    id=str(uuid4()),
-                    session_id=session.id,
-                    from_message_id=primary_context.summary_from_message_id,
-                    to_message_id=primary_context.summary_to_message_id,
-                    summary_text=generated.summary_text,
-                    key_facts_json=json.dumps(structure.key_facts),
-                    open_questions_json=json.dumps(structure.open_questions),
-                    decisions_json=json.dumps(structure.decisions),
-                    action_items_json=json.dumps(structure.action_items),
+        if primary_context.summary_triggered:
+            arq_redis: getattr(request.app.state, "arq_redis", None)
+            from arq import ArqRedis
+            redis_pool: ArqRedis | None = getattr(request.app.state, "arq_redis", None)
+            if redis_pool:
+                await redis_pool.enqueue_job(
+                    "session_summary",
+                    session.id,
+                    primary_context.summary_from_message_id,
+                    primary_context.summary_to_message_id,
                 )
-            )
+            else:
+                _LOGGER.warning("arq_redis not found in app state; skipping async summarization for session %s", session.id)
 
         db.add(
             TurnContextAudit(
@@ -1651,7 +1326,7 @@ async def create_turn_stream(
             usage_input_cached,
             usage_output,
             usage_total,
-        ) in usage_entries:
+        ) in state.usage_entries:
             oe_tokens = compute_oe_tokens(
                 input_tokens_fresh=usage_input_fresh,
                 input_tokens_cached=usage_input_cached,
@@ -1695,7 +1370,7 @@ async def create_turn_stream(
         done_payload: dict[str, object] = {
             "type": "done",
             "turn_id": turn.id,
-            "provider_model": usage_entries[-1][2] if usage_entries else (active_agent.model_alias if active_agent else "unknown"),
+            "provider_model": state.usage_entries[-1][2] if state.usage_entries else (active_agent.model_alias if active_agent else "unknown"),
             "summary_used_fallback": summary_used_fallback,
         }
         if last_debit_balance is not None:

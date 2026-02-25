@@ -30,8 +30,7 @@ from apps.api.app.services.llm.gateway import (
     get_llm_gateway,
 )
 from apps.api.app.services.orchestration.mode_executor import (
-    TurnExecutionInput,
-    TurnExecutionOutput,
+    TurnExecutionState,
     get_mode_executor,
 )
 from apps.api.app.services.usage.recorder import UsageRecord, get_usage_recorder
@@ -96,19 +95,12 @@ class FakeGateway:
 
 @dataclass
 class FakeModeExecutor:
-    async def run_turn(self, db: AsyncSession, payload: TurnExecutionInput) -> TurnExecutionOutput:
+    async def run_turn(self, db: AsyncSession, state: TurnExecutionState, event_sink=None) -> TurnExecutionState:
         _ = db
-        _ = payload
-        return TurnExecutionOutput(
-            text="ok",
-            provider_model="fake/provider",
-            usage=GatewayUsage(
-                input_tokens_fresh=10,
-                input_tokens_cached=0,
-                output_tokens=5,
-                total_tokens=15,
-            ),
-        )
+        agent = state.active_agents[0] if state.active_agents else None
+        state.assistant_entries.append((agent, "ok"))
+        state.usage_entries.append((agent.agent_id if agent else None, agent.model_alias if agent else "fake", "fake/provider", 10, 0, 5, 15))
+        return state
 
 
 @dataclass
