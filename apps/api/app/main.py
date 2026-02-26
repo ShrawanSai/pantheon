@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from arq import create_pool
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from apps.api.app.api.v1.routes.auth import router as auth_router
 from apps.api.app.api.v1.routes.admin import router as admin_router
@@ -51,14 +53,21 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="Pantheon API", version="0.1.0", lifespan=_lifespan)
     settings = get_settings()
-    if settings.api_cors_allowed_origins:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=settings.api_cors_allowed_origins,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.get("/test-console", response_class=HTMLResponse)
+    async def test_console():
+        ui_path = "test_ui.html"
+        if os.path.exists(ui_path):
+            with open(ui_path, "r", encoding="utf-8") as f:
+                return f.read()
+        return "test_ui.html not found in project root."
+
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")

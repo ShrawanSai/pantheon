@@ -6,8 +6,9 @@ import logging
 import os
 from dataclasses import dataclass, field
 from collections.abc import AsyncIterator
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, Type
 
+from pydantic import BaseModel
 from openai import AsyncOpenAI
 
 from pantheon_llm.openrouter_langchain import SUPPORTED_LLMS
@@ -36,6 +37,7 @@ class GatewayRequest:
     messages: list[GatewayMessage]
     max_output_tokens: int
     allowed_tools: tuple[str, ...] = ()
+    response_schema: Type[BaseModel] | None = None
 
 @dataclass(frozen=True)
 class GatewayResponse:
@@ -43,6 +45,8 @@ class GatewayResponse:
     provider_model: str
     usage: GatewayUsage
     tool_calls: list[Any] | None = None
+    thinking: str | None = None
+    raw_json: str | None = None
 
 @dataclass(frozen=True)
 class StreamingContext:
@@ -112,11 +116,25 @@ class OpenAICompatibleGateway:
 
         tools = [_TOOL_DEFINITIONS[t] for t in request.allowed_tools if t in _TOOL_DEFINITIONS] or None
 
+        # Build response_format for structured output
+        extra_kwargs: dict[str, Any] = {}
+        if request.response_schema and not tools:
+            schema = request.response_schema.model_json_schema()
+            extra_kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": request.response_schema.__name__,
+                    "strict": True,
+                    "schema": schema,
+                },
+            }
+
         response = await self._client.chat.completions.create(
             model=model_id,
             messages=_build_openai_messages(request.messages),
             max_tokens=request.max_output_tokens,
-            tools=tools, # type: ignore
+            tools=tools,  # type: ignore
+            **extra_kwargs,
         )
 
         choice = response.choices[0]
@@ -129,13 +147,30 @@ class OpenAICompatibleGateway:
         input_tokens = getattr(usage, "prompt_tokens", 0) or 0
         output_tokens = getattr(usage, "completion_tokens", 0) or 0
         
-        # openrouter cache tracking
-        extra = getattr(usage, "extra", {}) or {}
-        cached_tokens = getattr(usage, "prompt_tokens_details", {}).get("cached_tokens", 0)
+        # openrouter / openai cache tracking
+        prompt_details = getattr(usage, "prompt_tokens_details", None)
+        cached_tokens = 0
+        if prompt_details:
+            if isinstance(prompt_details, dict):
+                cached_tokens = prompt_details.get("cached_tokens", 0)
+            else:
+                cached_tokens = getattr(prompt_details, "cached_tokens", 0)
         
         if input_tokens == 0:
             input_tokens = sum(_estimate_tokens(m.content) for m in request.messages if m.content)
-            
+        # If structured output was requested, parse the JSON to extract fields
+        thinking = None
+        raw_json = None
+        if request.response_schema and not tool_calls:
+            raw_json = text
+            try:
+                parsed = json.loads(text)
+                text = parsed.get("response", text)
+                thinking = parsed.get("thinking", "")
+                _LOGGER.debug("Structured output parsed. thinking=%s", thinking[:100] if thinking else "")
+            except (json.JSONDecodeError, KeyError) as exc:
+                _LOGGER.warning("Failed to parse structured output, using raw text: %s", exc)
+
         return GatewayResponse(
             text=text,
             provider_model=provider_model,
@@ -145,7 +180,9 @@ class OpenAICompatibleGateway:
                 output_tokens=output_tokens,
                 total_tokens=input_tokens + output_tokens,
             ),
-            tool_calls=[tc.model_dump() for tc in tool_calls] if tool_calls else None
+            tool_calls=[tc.model_dump() for tc in tool_calls] if tool_calls else None,
+            thinking=thinking,
+            raw_json=raw_json,
         )
 
     async def stream(self, request: GatewayRequest) -> StreamingContext:
@@ -189,7 +226,14 @@ class OpenAICompatibleGateway:
                 if final_usage:
                     input_tokens = getattr(final_usage, "prompt_tokens", 0) or 0
                     output_tokens = getattr(final_usage, "completion_tokens", 0) or 0
-                    cached_tokens = getattr(final_usage, "prompt_tokens_details", {}).get("cached_tokens", 0)
+                    prompt_details = getattr(final_usage, "prompt_tokens_details", None)
+                    cached_tokens = 0
+                    if prompt_details:
+                        if isinstance(prompt_details, dict):
+                            cached_tokens = prompt_details.get("cached_tokens", 0)
+                        else:
+                            cached_tokens = getattr(prompt_details, "cached_tokens", 0)
+
                     if input_tokens == 0:
                         input_tokens = sum(_estimate_tokens(m.content) for m in request.messages if m.content)
                 else:

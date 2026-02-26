@@ -24,10 +24,12 @@ from apps.api.app.services.tools.mode_tools import (
     make_read_file_tool_execute,
     ToolInvocationTelemetry,
 )
+from apps.api.app.services.llm.structured_response import AgentResponse
 from apps.api.app.services.orchestration.orchestrator_manager import (
     route_turn,
     generate_orchestrator_synthesis,
     evaluate_orchestrator_round,
+    build_orchestrator_synthesis_messages,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -132,9 +134,14 @@ class PurePythonModeExecutor:
                     model_alias=agent.model_alias,
                     messages=messages,
                     max_output_tokens=state.max_output_tokens,
-                    allowed_tools=agent.tool_permissions
+                    allowed_tools=agent.tool_permissions,
+                    response_schema=AgentResponse,
                 )
                 
+                if event_sink:
+                    _LOGGER.info("Sending agent_start for %s", agent.name)
+                    await event_sink("agent_start", {"agent_name": agent.name, "agent_key": agent.agent_key})
+
                 # If tools are permitted, just use generate to ensure tool_calls are cleanly extracted.
                 # If streaming is requested and no tools, use stream mode.
                 if agent.tool_permissions or not event_sink:
@@ -154,7 +161,8 @@ class PurePythonModeExecutor:
                         if tool_records:
                             state.tool_trace_entries.append((agent, tool_records))
                         if event_sink:
-                            await event_sink("chunk", {"delta": f"{agent.name}: {response.text}"})
+                            await event_sink("chunk", {"delta": response.text})
+                            await event_sink("agent_end", {"agent_name": agent.name})
                         return response.text, True
                         
                     messages.append(GatewayMessage(role="assistant", content=response.text, tool_calls=response.tool_calls))
@@ -191,10 +199,10 @@ class PurePythonModeExecutor:
                     is_first_chunk = True
                     async for delta in stream_ctx.chunks:
                         output_parts.append(delta)
-                        if is_first_chunk:
-                            await event_sink("chunk", {"delta": f"{agent.name}: "})
-                            is_first_chunk = False
                         await event_sink("chunk", {"delta": delta})
+                            
+                    if event_sink:
+                        await event_sink("agent_end", {"agent_name": agent.name})
                             
                     text_out = "".join(output_parts)
                     usage_obj = await stream_ctx.usage_future
@@ -275,10 +283,23 @@ class PurePythonModeExecutor:
         state: TurnExecutionState,
         event_sink: EventSink | None = None
     ):
+        user_input_lower = state.user_input.lower()
+        
+        # If the user explicitly mentors @agent_key, that agent should respond first
+        def _sort_key(item: tuple[int, ActiveAgent]) -> tuple[int, int]:
+            idx, agent = item
+            mention_key = f"@{agent.agent_key.lower()}" if agent.agent_key else ""
+            priority = 0 if mention_key and mention_key in user_input_lower else 1
+            return (priority, idx)
+
+        ordered_agents = [
+            agent for _, agent in sorted(enumerate(state.active_agents), key=_sort_key)
+        ]
+
         shared_history = []
-        for agent in state.active_agents:
+        for agent in ordered_agents:
             base_messages = [
-                GatewayMessage(role="system", content=f"Room mode: roundtable\nAgent role: {agent.role_prompt}"),
+                GatewayMessage(role="system", content=f"Room mode: roundtable\nAgent role: {agent.role_prompt}\n\nCRITICAL: You are {agent.name}. Respond ONLY with your own direct speech. DO NOT include your own name, name tags (like '[{agent.name}]:' or '{agent.name}:'), or dialogue for others. Start immediately with your content. You are participating in a group conversation; acknowledge the user or previous agent statements if relevant."),
                 *state.primary_context_messages,
                 *shared_history
             ]
@@ -288,7 +309,10 @@ class PurePythonModeExecutor:
             state.specialist_outputs.append((agent.name, text))
             
             if success:
-                shared_history.append(GatewayMessage(role="assistant", content=f"[{agent.name}]: {text}"))
+                # IMPORTANT: Use role="user" for other agents' speech. 
+                # If we use "assistant", the LLM thinks *it* said this previously, 
+                # which causes it to hallucinate or return an empty string.
+                shared_history.append(GatewayMessage(role="user", content=f"[{agent.name} just said]:\n{text}"))
             else:
                 state.current_status = "partial"
                 
@@ -324,8 +348,18 @@ class PurePythonModeExecutor:
             by_key = {a.agent_key.lower(): a for a in state.active_agents if a.agent_key}
             round_assignments = [by_key[k.lower()] for k in routing.selected_agent_keys if k.lower() in by_key]
             if not round_assignments:
-                round_assignments = [state.active_agents[0]]
-                
+                if state.current_round == 1:
+                    round_assignments = [state.active_agents[0]]
+                else:
+                    # If routing explicitly selects nobody after round 1, respect it and stop early
+                    if event_sink:
+                        await event_sink("manager_think", {
+                            "phase": "evaluation",
+                            "round": state.current_round,
+                            "decision": "synthesize"
+                        })
+                    break
+                    
             remaining = max_cap - state.total_invocations
             round_assignments = round_assignments[:min(3, remaining)]
             if not round_assignments:
@@ -333,16 +367,43 @@ class PurePythonModeExecutor:
                 
             round_outputs = []
             
+            if event_sink:
+                await event_sink("manager_think", {
+                    "phase": "routing",
+                    "round": state.current_round,
+                    "target_agents": [a.name for a in round_assignments]
+                })
+
             for agent in round_assignments:
                 base_messages = [
-                    GatewayMessage(role="system", content=f"Agent role: {agent.role_prompt}"),
+                    GatewayMessage(
+                        role="system", 
+                        content=(
+                            f"CRITICAL INSTRUCTION: You are {agent.name}. {agent.role_prompt}\n\n"
+                            f"You are currently in a meeting being moderated by an Orchestrating Manager. "
+                            f"The Manager has specifically called upon YOU ({agent.name}) to speak.\n\n"
+                            f"RULES:\n"
+                            f"1. You MUST stay in character as {agent.name}.\n"
+                            f"2. You are NOT the Manager. Do not describe the process, do not moderate the room, do not summarize, and do not assign tasks.\n"
+                            f"3. Respond ONLY with your own direct speech, answering the user's prompt from your unique perspective.\n"
+                            f"4. DO NOT include your own name, name tags (like '[{agent.name}]:' or '{agent.name}:'), or narrative actions."
+                        )
+                    ),
                     *state.primary_context_messages,
                 ]
+
+                # If this isn't the first turn, provide the prior outputs so the agent knows what has been discussed
+                if state.specialist_outputs:
+                    specialist_block = "\n\n".join(f"[{name} just said]:\n{text}" for name, text in state.specialist_outputs)
+                    base_messages.append(
+                        GatewayMessage(role="user", content=f"Previous specialist outputs in this room:\n{specialist_block}")
+                    )
                 
                 text, success = await self._invoke_agent(state, agent, base_messages, db, event_sink)
                 round_outputs.append((agent, text))
                 if success:
                     state.specialist_outputs.append((agent.name, text))
+                    state.assistant_entries.append((agent, text))
                 state.total_invocations += 1
                 
             state.per_round_entries.append(round_outputs)
@@ -361,6 +422,13 @@ class PurePythonModeExecutor:
                     all_round_outputs=state.specialist_outputs,
                     current_round=state.current_round,
                 )
+                if event_sink:
+                    await event_sink("manager_think", {
+                        "phase": "evaluation",
+                        "round": state.current_round,
+                        "decision": "continue" if eval_decision.should_continue else "synthesize"
+                    })
+
                 if not eval_decision.should_continue:
                     break
                     
@@ -368,7 +436,8 @@ class PurePythonModeExecutor:
 
         if state.specialist_outputs:
             if event_sink:
-                await event_sink("chunk", {"delta": "\n\n---\n\nManager synthesis:\n"})
+                await event_sink("agent_start", {"agent_name": "Manager", "agent_key": "manager"})
+                await event_sink("chunk", {"delta": "---\n\nManager synthesis:\n"})
             try:
                 # Always stream synthesis if event sinks exist, as it has no tools.
                 if event_sink:

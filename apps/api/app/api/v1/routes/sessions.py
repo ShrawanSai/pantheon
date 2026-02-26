@@ -8,7 +8,7 @@ import logging
 import typing
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -493,7 +493,7 @@ async def create_turn(
                 },
             )
 
-        if room.current_mode == "roundtable":
+        if room.current_mode in ("roundtable", "orchestrator"):
             selected_assignments = room_agents
         elif room.current_mode in {"manual", "tag"}:
             selected_assignments = manual_tag_selected_agents or (
@@ -567,8 +567,15 @@ async def create_turn(
             continue
         role = "user" if message.role == "user" else "assistant"
         content = message.content
+        if message.role == "assistant":
+            # Strip legacy hallucinated tags like [Sundar]: or Sundar: from the stored content
+            content = re.sub(r'^\[.*?\]:\s*', '', content)
+            # Only strip Name: if it looks like a prefix (not just the start of a sentence)
+            # We use a non-greedy match and check for a following space
+            content = re.sub(r'^[A-Za-z0-9_\s]{2,20}:\s*', '', content)
+
         if room is not None and message.role == "assistant" and message.visibility == "shared":
-            content = f"[{message.agent_name or message.source_agent_key}]: {message.content}"
+            content = f"{message.agent_name or message.source_agent_key}: {content}"
         history_messages.append(
             HistoryMessage(
                 id=message.id,
@@ -968,7 +975,7 @@ async def create_turn_stream(
                 },
             )
 
-        if room.current_mode == "roundtable":
+        if room.current_mode in ("roundtable", "orchestrator"):
             selected_assignments = room_agents
         elif room.current_mode in {"manual", "tag"}:
             selected_assignments = manual_tag_selected_agents or (
@@ -1086,9 +1093,18 @@ async def create_turn_stream(
             if message.role not in {"user", "assistant", "tool"}:
                 continue
             role = "user" if message.role == "user" else "assistant"
+            
+            # Sanitize assistant content by stripping legacy or hallucinated name tags
             content = message.content
+            if message.role == "assistant":
+                # Strip bracketed tags or leading name prefixes
+                content = re.sub(r'^\[.*?\]:\s*', '', content)
+                content = re.sub(r'^[A-Za-z0-9_\s]{2,20}:\s*', '', content)
+
             if room is not None and message.role == "assistant" and message.visibility == "shared":
-                content = f"[{message.agent_name or message.source_agent_key}]: {message.content}"
+                # Re-apply a standard, clean prefix for context
+                content = f"{message.agent_name or message.source_agent_key}: {content}"
+                
             history_messages.append(
                 HistoryMessage(
                     id=message.id,
@@ -1243,18 +1259,11 @@ async def create_turn_stream(
                     Message(
                         id=str(uuid4()),
                         turn_id=turn.id,
-                        session_id=session.id,
-                        role="tool",
-                        visibility="private",
-                        agent_key=trace_agent.agent_key,
-                        source_agent_key=trace_agent.agent_key,
-                        agent_name=trace_agent.name,
-                        mode=turn_mode,
-                        content=tool_call.output_json,
-                    )
-                )
+                created_at=base_msg_time,
+            )
+        )
 
-        for entry_agent, entry_content in state.assistant_entries:
+        for i, (entry_agent, entry_content) in enumerate(state.assistant_entries, start=1):
             db.add(
                 Message(
                     id=str(uuid4()),
@@ -1267,8 +1276,10 @@ async def create_turn_stream(
                     agent_name=entry_agent.name,
                     mode=turn_mode,
                     content=entry_content,
+                    created_at=base_msg_time + timedelta(milliseconds=i),
                 )
             )
+
         if state.final_synthesis:
             db.add(
                 Message(
@@ -1282,11 +1293,11 @@ async def create_turn_stream(
                     agent_name="Manager",
                     mode=turn_mode,
                     content=state.final_synthesis,
+                    created_at=base_msg_time + timedelta(milliseconds=len(state.assistant_entries) + 1),
                 )
             )
 
         if primary_context.summary_triggered:
-            arq_redis: getattr(request.app.state, "arq_redis", None)
             from arq import ArqRedis
             redis_pool: ArqRedis | None = getattr(request.app.state, "arq_redis", None)
             if redis_pool:
