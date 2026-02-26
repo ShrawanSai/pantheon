@@ -14,6 +14,8 @@ class RoutableAgent(Protocol):
     def agent_key(self) -> str | None: ...
     @property
     def role_prompt(self) -> str: ...
+    @property
+    def tool_permissions(self) -> tuple[str, ...]: ...
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,11 +64,13 @@ def _build_manager_system_prompt(
 ) -> str:
     lines = [
         "You are a routing manager for a multi-agent council room.",
+        "Your job is to select the best agents from the room to answer the user's latest input.",
         "",
-        "Available agents:",
+        "Available agents and their capabilities:",
     ]
     for agent in agents:
-        lines.append(f'- key: "{agent.agent_key}", role: "{agent.role_prompt[:120]}"')
+        tools = ", ".join(agent.tool_permissions) if agent.tool_permissions else "None"
+        lines.append(f'- key: "{agent.agent_key}"\n  role: "{agent.role_prompt}"\n  tools: [{tools}]')
     if prior_round_outputs:
         lines.extend(
             [
@@ -78,11 +82,16 @@ def _build_manager_system_prompt(
     lines.extend(
         [
             "",
-            "Select up to 3 best agents to handle the user's request in execution order.",
+            "ROUTING RULES:",
+            "1. Select up to 3 best agents to handle the user's request.",
+            "2. If the user asks for multiple perspectives, or if the task inherently applies to multiple agents (e.g. 'I want all CEOs...', 'What do you guys think...'), you MUST select ALL relevant agents at once in this single round.",
+            "3. DO NOT select an agent that has already provided an output in prior rounds unless they explicitly need to respond to what another agent just said.",
+            "4. Prefer running agents concurrently (selecting multiple keys at once) rather than sequencing them across multiple rounds, unless they depend on each other's output.",
             "",
             "Respond ONLY with valid JSON in exactly this format:",
             '{"selected_agent_keys": ["<key1>", "<key2>"]}',
             "",
+            "CRITICAL: `selected_agent_keys` MUST be a JSON array of strings.",
             "Do not include any other text, explanation, or markdown.",
         ]
     )
@@ -145,6 +154,25 @@ async def route_turn(
         raise ValueError("route_turn requires at least one available agent.")
 
     fallback = OrchestratorRoutingDecision(selected_agent_keys=(agents[0].agent_key,))
+    
+    with open("orchestrator_debug.txt", "a", encoding="utf-8") as f:
+        f.write(f"--- route_turn called ---\n")
+        f.write(f"NUM AGENTS: {len(agents)}\n")
+        f.write(f"AGENT KEYS: {[a.agent_key for a in agents]}\n")
+        f.write(f"USER INPUT: {user_input[:100]}\n")
+        f.write(f"PRIOR OUTPUTS: {'YES' if prior_round_outputs else 'NO'}\n")
+    
+    # Deterministic routing for explicit "all" requests on the first round
+    user_lower = user_input.lower()
+    if not prior_round_outputs and ("all " in user_lower) and len(agents) > 1:
+        # If the user is asking for all agents/CEOs, just return them all. 
+        # LLMs often struggle to output multiple JSON array elements even when instructed.
+        keys = tuple(a.agent_key for a in agents if a.agent_key is not None)
+        with open("orchestrator_debug.txt", "a", encoding="utf-8") as f:
+            f.write(f"DETERMINISTIC ROUTING TRIGGERED! Keys: {keys}\n")
+        if keys:
+            return OrchestratorRoutingDecision(selected_agent_keys=keys)
+
     response = await gateway.generate(
         GatewayRequest(
             model_alias=manager_model_alias,
@@ -153,19 +181,27 @@ async def route_turn(
                     role="system",
                     content=_build_manager_system_prompt(agents, prior_round_outputs=prior_round_outputs),
                 ),
-                GatewayMessage(role="user", content=user_input),
+                GatewayMessage(
+                    role="user", 
+                    content=f"User Request: {user_input}\n\nCRITICAL: If the user asks for multiple perspectives, return an array containing ALL relevant agent keys. Do not just return one."
+                ),
             ],
             max_output_tokens=256,
         )
     )
 
     try:
+        with open("orchestrator_debug.txt", "a", encoding="utf-8") as f:
+            f.write(f"RAW LLM RESPONSE: {response.text}\n")
+            
         parsed = _RoutingResponse.model_validate_json(_strip_json_fences(response.text))
+        
+        with open("orchestrator_debug.txt", "a", encoding="utf-8") as f:
+            f.write(f"PARSED KEYS: {parsed.selected_agent_keys} OR {parsed.selected_agent_key}\n")
+            
         selected_agent_keys = parsed.selected_agent_keys or (
             [parsed.selected_agent_key] if parsed.selected_agent_key else []
         )
-        if not selected_agent_keys:
-            raise ValueError("manager response contains no agent keys")
 
         normalized_keys: list[str] = []
         seen: set[str] = set()
@@ -196,11 +232,15 @@ async def route_turn(
             selected.append(mapped.agent_key)
 
     if not selected:
-        _LOGGER.warning(
-            "Orchestrator manager selected no valid agent keys (%s); falling back to first agent.",
-            normalized_keys,
-        )
-        return fallback
+        if not prior_round_outputs:
+            _LOGGER.warning(
+                "Orchestrator manager selected no valid agent keys (%s) on first round; falling back to first agent.",
+                normalized_keys,
+            )
+            return fallback
+        else:
+            # On subsequent rounds, empty selection is valid and means stop
+            return OrchestratorRoutingDecision(selected_agent_keys=())
 
     return OrchestratorRoutingDecision(selected_agent_keys=tuple(selected))
 

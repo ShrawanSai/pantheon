@@ -86,6 +86,12 @@ async def create_room(
     if existing_user is None:
         db.add(User(id=user_id, email=email))
 
+    if payload.current_mode == "orchestrator" and (not payload.goal or not payload.goal.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A goal or theme must be provided when creating a room in orchestrator mode.",
+        )
+
     room = Room(
         id=str(uuid4()),
         owner_user_id=user_id,

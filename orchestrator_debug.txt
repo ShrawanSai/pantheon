@@ -1,0 +1,278 @@
+﻿
+--- route_turn called ---
+NUM AGENTS: 1
+AGENT KEYS: ['sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["sam"]}
+PARSED KEYS: ['sam'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style, and then present all results to m
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('elon', 'sundar', 'sam')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: What does Elon think about Mars?
+PRIOR OUTPUTS: NO
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style, and then present all results to m
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('elon', 'sundar', 'sam')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: What does Elon think about Mars?
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon"]}
+PARSED KEYS: ['elon'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Now let Sundar respond to Elon.
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": ["sundar"]}
+PARSED KEYS: ['sundar'] OR None
+--- route_turn called ---
+NUM AGENTS: 1
+AGENT KEYS: ['elon']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon"]}
+PARSED KEYS: ['elon'] OR None
+--- route_turn called ---
+NUM AGENTS: 1
+AGENT KEYS: ['elon']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon"]}
+PARSED KEYS: ['elon'] OR None
+--- route_turn called ---
+NUM AGENTS: 1
+AGENT KEYS: ['elon']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 1
+AGENT KEYS: ['elon']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('elon', 'sundar', 'sam')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": ["sundar", "sam", "elon"]}
+PARSED KEYS: ['sundar', 'sam', 'elon'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Okay now i want all CEOs to name their favourite fruit.
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('elon', 'sundar', 'sam')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Can you now ask them to review each others choice?
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar", "sam"]}
+PARSED KEYS: ['elon', 'sundar', 'sam'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Can you now ask them to review each others choice?
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Can you now ask them to review each others choice?
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('elon', 'sundar', 'sam')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('elon', 'sundar', 'sam')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('elon', 'sundar', 'sam')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: I want all CEOs to review each others critiques in managing style. and then present all results to m
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('elon', 'sundar', 'sam')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: okay now tell me where each CEO is from?
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar", "sam"]}
+PARSED KEYS: ['elon', 'sundar', 'sam'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: now review if each CEO has been to the place where each CEO is from
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar", "sam"]}
+PARSED KEYS: ['elon', 'sundar', 'sam'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs companies
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar", "sam"]}
+PARSED KEYS: ['elon', 'sundar', 'sam'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs companies
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs (in the council) companies
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar", "sam"]}
+PARSED KEYS: ['elon', 'sundar', 'sam'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs (in the council) companies
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar", "sam"]}
+PARSED KEYS: ['elon', 'sundar', 'sam'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs (in the council) companies
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: @sundar be more critical of sam
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["sundar"]}
+PARSED KEYS: ['sundar'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: @sundar be more critical of sam
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask Elon and Sundar about the future of AI and then summarize.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar"]}
+PARSED KEYS: ['elon', 'sundar'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask Elon and Sundar about the future of energy and then summarize.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar"]}
+PARSED KEYS: ['elon', 'sundar'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask Elon and Sundar about the future of energy and then summarize.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar"]}
+PARSED KEYS: ['elon', 'sundar'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask Elon and Sundar about the future of energy and then summarize.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar"]}
+PARSED KEYS: ['elon', 'sundar'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask Elon and Sundar about the future of energy and then summarize.
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask Elon and Sundar about the future of energy and then summarize.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar"]}
+PARSED KEYS: ['elon', 'sundar'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs (in the council) companies
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar", "sam"]}
+PARSED KEYS: ['elon', 'sundar', 'sam'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs (in the council) companies
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
