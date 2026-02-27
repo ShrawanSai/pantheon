@@ -91,12 +91,23 @@ class ContextManager:
                 estimated_tokens=0,
             )
 
-        base_messages: list[ContextMessage] = list(system_messages)
+        base_messages: list[ContextMessage] = [ContextMessage(role="system", content="--- SYSTEM ---")]
+        base_messages.extend(list(system_messages))
         if latest_summary_text:
             base_messages.append(ContextMessage(role="system", content=f"Session summary: {latest_summary_text}"))
 
         raw_history_messages = [ContextMessage(role=item.role, content=item.content) for item in history_messages]
-        before_messages = [*base_messages, *raw_history_messages, ContextMessage(role="user", content=user_input)]
+        if raw_history_messages:
+            history_block = [ContextMessage(role="system", content="--- HISTORY ---"), *raw_history_messages]
+        else:
+            history_block = []
+
+        before_messages = [
+            *base_messages,
+            *history_block,
+            ContextMessage(role="system", content="--- CURRENT TURN ---"),
+            ContextMessage(role="user", content=user_input)
+        ]
         estimated_before = self.estimate_tokens(before_messages)
 
         summary_triggered = False
@@ -143,8 +154,18 @@ class ContextManager:
         else:
             estimated_after_prune = estimated_after_summary
 
-        final_history_messages = [ContextMessage(role=item.role, content=item.content) for item in working_history]
-        final_messages = [*base_messages, *final_history_messages, ContextMessage(role="user", content=user_input)]
+        if working_history:
+            final_history_messages = [ContextMessage(role="system", content="--- HISTORY ---")]
+            final_history_messages.extend([ContextMessage(role=item.role, content=item.content) for item in working_history])
+        else:
+            final_history_messages = []
+
+        final_messages = [
+            *base_messages,
+            *final_history_messages,
+            ContextMessage(role="system", content="--- CURRENT TURN ---"),
+            ContextMessage(role="user", content=user_input)
+        ]
 
         return ContextPreparation(
             messages=final_messages,

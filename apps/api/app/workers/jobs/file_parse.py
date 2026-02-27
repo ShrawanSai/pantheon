@@ -77,14 +77,56 @@ def _parse_csv(raw_text: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _parse_pdf(raw_bytes: bytes) -> str:
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(raw_bytes))
+    pages: list[str] = []
+    for page in reader.pages:
+        text = page.extract_text()
+        if text:
+            pages.append(text.strip())
+    return "\n\n".join(pages).strip()
+
+
+def _parse_docx(raw_bytes: bytes) -> str:
+    from docx import Document
+    doc = Document(io.BytesIO(raw_bytes))
+    paragraphs: list[str] = []
+    for para in doc.paragraphs:
+        if para.text.strip():
+            paragraphs.append(para.text.strip())
+    return "\n\n".join(paragraphs).strip()
+
+
+def _parse_xlsx(raw_bytes: bytes) -> str:
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
+    sheets: list[str] = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows: list[str] = []
+        for row in ws.iter_rows(values_only=True):
+            cells = [str(cell).strip() if cell is not None else "" for cell in row]
+            rows.append(" | ".join(cells))
+        if rows:
+            sheets.append(f"[Sheet: {sheet_name}]\n" + "\n".join(rows))
+    wb.close()
+    return "\n\n".join(sheets).strip()
+
+
 def _extract_parsed_text(filename: str, raw_bytes: bytes) -> str:
     extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    raw_text = raw_bytes.decode("utf-8", errors="replace")
 
     if extension in {"txt", "md"}:
-        return raw_text
+        return raw_bytes.decode("utf-8", errors="replace")
     if extension == "csv":
-        return _parse_csv(raw_text)
+        return _parse_csv(raw_bytes.decode("utf-8", errors="replace"))
+    if extension == "pdf":
+        return _parse_pdf(raw_bytes)
+    if extension == "docx":
+        return _parse_docx(raw_bytes)
+    if extension in {"xlsx", "xls"}:
+        return _parse_xlsx(raw_bytes)
     raise ValueError(f"Unsupported file format: {extension or 'unknown'}")
 
 
