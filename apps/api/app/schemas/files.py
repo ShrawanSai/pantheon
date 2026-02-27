@@ -14,7 +14,8 @@ class UploadedFileRead(BaseModel):
 
     id: str
     user_id: str
-    room_id: str
+    room_id: str | None = None
+    session_id: str | None = None
     filename: str
     storage_key: str
     content_type: str

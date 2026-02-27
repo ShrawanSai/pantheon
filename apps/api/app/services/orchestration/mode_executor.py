@@ -121,6 +121,7 @@ class PurePythonModeExecutor:
         if "file_read" in agent.tool_permissions and self._file_read_tool:
             local_tools["file_read"] = make_read_file_tool_execute(
                 room_id=state.room_id,
+                session_id=state.session_id,
                 db=db,
                 file_tool=self._file_read_tool,
                 telemetry_sink=telemetry_records.append,

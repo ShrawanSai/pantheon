@@ -25,6 +25,11 @@ import {
   type SessionRead,
   type StreamEvent
 } from "@/lib/api/sessions";
+import {
+  listRoomFiles,
+  uploadFile,
+  type UploadedFileRead
+} from "@/lib/api/files";
 
 type RoomWorkspacePageProps = {
   params: {
@@ -103,6 +108,11 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
     queryKey: ["sessionTurns", selectedSessionId],
     queryFn: () => listSessionTurns(selectedSessionId),
     enabled: Boolean(selectedSessionId)
+  });
+
+  const filesQuery = useQuery({
+    queryKey: ["roomFiles", roomId],
+    queryFn: () => listRoomFiles(roomId)
   });
 
   useEffect(() => {
@@ -192,6 +202,17 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
     },
     onError: (error) => {
       setComposerError(error instanceof ApiError ? error.detail : "Failed to send turn.");
+    }
+  });
+
+  const uploadFileMutation = useMutation({
+    mutationFn: async (file: File) => uploadFile(roomId, file),
+    onSuccess: async () => {
+      setActionMessage("File uploaded successfully.");
+      await queryClient.invalidateQueries({ queryKey: ["roomFiles", roomId] });
+    },
+    onError: (error) => {
+      setActionMessage(error instanceof ApiError ? error.detail : "Failed to upload file.");
     }
   });
 
@@ -434,6 +455,34 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
             </div>
           </div>
 
+          <div className="mt-4 rounded-md border border-[--border] bg-[--bg-base] p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold">Attached Files</h3>
+            </div>
+            {filesQuery.data && filesQuery.data.length > 0 ? (
+              <div className="flex flex-wrap gap-2 text-xs">
+                {filesQuery.data.map((file) => (
+                  <div key={file.id} className="flex items-center gap-1 rounded bg-[--bg-surface] px-2 py-1 border border-[--border]" title={`ID: ${file.id}\nStatus: ${file.parse_status}`}>
+                    <span
+                      className="inline-block h-2 w-2 rounded-full"
+                      style={{
+                        backgroundColor:
+                          file.parse_status === "completed"
+                            ? "var(--green)"
+                            : file.parse_status === "failed"
+                              ? "var(--red)"
+                              : "var(--orange)"
+                      }}
+                    />
+                    {file.filename}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-[--text-muted]">No files uploaded for this room.</p>
+            )}
+          </div>
+
           <div className="mt-4 grid gap-2">
             <label className="text-sm text-[--text-muted]" htmlFor="turn-message">
               Send a turn
@@ -446,25 +495,50 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
               placeholder="Type your message..."
               disabled={!selectedSessionId || isStreaming || submitTurnMutation.isPending}
             />
-            <label className="inline-flex items-center gap-2 text-sm text-[--text-muted]">
-              <input
-                type="checkbox"
-                checked={streamingEnabled}
-                onChange={(event) => setStreamingEnabled(event.target.checked)}
-                disabled={!selectedSessionId || isStreaming || submitTurnMutation.isPending}
-              />
-              Enable streaming (falls back to standard send on error)
-            </label>
-            {composerError ? <p className="text-sm text-red-300">{composerError}</p> : null}
-            <div className="flex justify-end">
-              <Button
-                type="button"
-                onClick={handleSendTurn}
-                disabled={!selectedSessionId || isStreaming || submitTurnMutation.isPending}
-              >
-                {isStreaming ? "Streaming..." : submitTurnMutation.isPending ? "Sending..." : "Send Turn"}
-              </Button>
+            <div className="flex items-center justify-between">
+              <label className="inline-flex items-center gap-2 text-sm text-[--text-muted]">
+                <input
+                  type="checkbox"
+                  checked={streamingEnabled}
+                  onChange={(event) => setStreamingEnabled(event.target.checked)}
+                  disabled={!selectedSessionId || isStreaming || submitTurnMutation.isPending}
+                />
+                Enable streaming
+              </label>
+              <div>
+                <input
+                  type="file"
+                  id="file-upload"
+                  className="hidden"
+                  accept=".txt,.md,.csv"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      uploadFileMutation.mutate(file);
+                    }
+                    e.target.value = "";
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => document.getElementById("file-upload")?.click()}
+                  disabled={uploadFileMutation.isPending}
+                  title="Upload File (.txt, .md, .csv)"
+                >
+                  {uploadFileMutation.isPending ? "Uploading..." : "📎"}
+                </Button>
+                <Button
+                  className="ml-2"
+                  type="button"
+                  onClick={handleSendTurn}
+                  disabled={!selectedSessionId || isStreaming || submitTurnMutation.isPending}
+                >
+                  {isStreaming ? "Streaming..." : submitTurnMutation.isPending ? "Sending..." : "Send Turn"}
+                </Button>
+              </div>
             </div>
+            {composerError ? <p className="text-sm text-red-300">{composerError}</p> : null}
           </div>
 
           {isStreaming || streamDraft || streamTrace.length > 0 ? (

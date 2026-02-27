@@ -169,5 +169,7 @@ async def delete_agent(
     now = datetime.now(timezone.utc)
     agent.deleted_at = now
     agent.updated_at = now
+    suffix = f"_{int(now.timestamp())}"
+    agent.agent_key = f"{agent.agent_key[:64 - len(suffix)]}{suffix}"
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

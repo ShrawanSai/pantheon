@@ -18,13 +18,21 @@ class FileReadResult:
 
 
 class FileReadTool(Protocol):
-    async def read(self, *, file_id: str, room_id: str, db: AsyncSession) -> FileReadResult: ...
+    async def read(self, *, file_id: str, db: AsyncSession, room_id: str | None = None, session_id: str | None = None) -> FileReadResult: ...
 
 
 class DefaultFileReadTool:
-    async def read(self, *, file_id: str, room_id: str, db: AsyncSession) -> FileReadResult:
+    async def read(self, *, file_id: str, db: AsyncSession, room_id: str | None = None, session_id: str | None = None) -> FileReadResult:
         row = await db.get(UploadedFile, file_id)
-        if row is None or row.room_id != room_id:
+        if row is None:
+            return FileReadResult(status="not_found", content=None, error="File not found.")
+
+        # Tell type checker row is not None
+        assert row is not None
+
+        if room_id and row.room_id != room_id:
+            return FileReadResult(status="not_found", content=None, error="File not found.")
+        if session_id and row.session_id != session_id:
             return FileReadResult(status="not_found", content=None, error="File not found.")
 
         if row.parse_status == "pending":
