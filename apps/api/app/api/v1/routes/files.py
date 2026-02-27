@@ -16,8 +16,9 @@ from apps.api.app.dependencies.auth import get_current_user
 from apps.api.app.dependencies.rooms import get_owned_active_room_or_404
 from apps.api.app.schemas.files import UploadedFileRead
 from apps.api.app.services.storage.supabase_storage import StorageService, get_storage_service
+from apps.api.app.api.v1.routes.sessions import _get_owned_active_session_or_404
 
-router = APIRouter(prefix="/rooms", tags=["files"])
+router = APIRouter(tags=["files"])
 
 ALLOWED_FILE_EXTENSIONS = {"txt", "md", "csv"}
 
@@ -44,7 +45,7 @@ def _to_uploaded_file_read(file_row: UploadedFile) -> UploadedFileRead:
 
 
 @router.post(
-    "/{room_id}/files",
+    "/rooms/{room_id}/files",
     response_model=UploadedFileRead,
     status_code=status.HTTP_201_CREATED,
 )
@@ -96,7 +97,7 @@ async def upload_room_file(
 
 
 @router.get(
-    "/{room_id}/files",
+    "/rooms/{room_id}/files",
     response_model=list[UploadedFileRead],
 )
 async def list_room_files(
@@ -115,3 +116,80 @@ async def list_room_files(
         )
     ).all()
     return [_to_uploaded_file_read(row) for row in rows]
+
+
+@router.post(
+    "/sessions/{session_id}/files",
+    response_model=UploadedFileRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_session_file(
+    session_id: str,
+    file: UploadFile = File(...),
+    current_user: dict[str, str] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    storage: StorageService = Depends(get_storage_service),
+    arq_redis: ArqRedis = Depends(get_arq_redis),
+) -> UploadedFileRead:
+    user_id = current_user["user_id"]
+    await _get_owned_active_session_or_404(db, session_id=session_id, user_id=user_id)
+
+    filename = (file.filename or "").strip()
+    if not filename:
+        raise HTTPException(status_code=422, detail="Filename is required.")
+    extension = Path(filename).suffix.lower().lstrip(".")
+    if extension not in ALLOWED_FILE_EXTENSIONS:
+        raise HTTPException(status_code=422, detail="Unsupported file format. Allowed: txt, md, csv.")
+
+    payload = await file.read()
+    file_size = len(payload)
+    if file_size > settings.file_max_bytes:
+        raise HTTPException(status_code=413, detail="File exceeds maximum allowed size.")
+
+    file_id = str(uuid4())
+    safe_name = Path(filename).name.replace(" ", "_")
+    storage_key = f"sessions/{session_id}/{file_id}/{safe_name}"
+    content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+
+    await storage.upload_bytes(storage_key=storage_key, content=payload, content_type=content_type)
+
+    file_row = UploadedFile(
+        id=file_id,
+        user_id=user_id,
+        room_id=None,
+        session_id=session_id,
+        filename=filename,
+        storage_key=storage_key,
+        content_type=content_type,
+        file_size=file_size,
+    )
+    db.add(file_row)
+    await db.commit()
+    await db.refresh(file_row)
+
+    await arq_redis.enqueue_job("file_parse", file_row.id)
+    return _to_uploaded_file_read(file_row)
+
+
+@router.get(
+    "/sessions/{session_id}/files",
+    response_model=list[UploadedFileRead],
+)
+async def list_session_files(
+    session_id: str,
+    current_user: dict[str, str] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[UploadedFileRead]:
+    user_id = current_user["user_id"]
+    await _get_owned_active_session_or_404(db, session_id=session_id, user_id=user_id)
+
+    rows = (
+        await db.scalars(
+            select(UploadedFile)
+            .where(UploadedFile.session_id == session_id)
+            .order_by(UploadedFile.created_at.desc())
+        )
+    ).all()
+    return [_to_uploaded_file_read(row) for row in rows]
+

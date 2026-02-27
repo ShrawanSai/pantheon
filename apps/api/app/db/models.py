@@ -386,14 +386,21 @@ class UploadedFile(Base):
             "parse_status IN ('pending', 'completed', 'failed')",
             name="ck_uploaded_files_parse_status",
         ),
+        CheckConstraint(
+            "(room_id IS NOT NULL AND session_id IS NULL) OR (room_id IS NULL AND session_id IS NOT NULL)",
+            name="ck_uploaded_files_parent",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    room_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False, index=True
+    room_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=True, index=True
     )
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_key: Mapped[str] = mapped_column(String(512), nullable=False)

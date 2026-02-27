@@ -857,7 +857,7 @@
       document.getElementById("uploadBtn").style.display = "inline-block";
       loadRoomAgents(id);
       loadSessions("room", id);
-      loadRoomFiles(id);
+      loadFiles();
     }
 
     async function selectAgent(id) {
@@ -871,7 +871,7 @@
       document.getElementById("chatModeBadge").style.display = "none";
       document.getElementById("roomAgentsSection").style.display = "none";
       document.getElementById("sessionsSection").style.display = "block";
-      document.getElementById("uploadBtn").style.display = "none";
+      document.getElementById("uploadBtn").style.display = "inline-block";
       document.getElementById("roomFiles").style.display = "none";
       loadSessions("agent", id);
     }
@@ -968,6 +968,8 @@
       if (activeRoom) loadSessions("room", activeRoom.id);
       else if (activeAgent) loadSessions("agent", activeAgent.id);
 
+      loadFiles();
+
       // Load messages
       try {
         const r = await api("GET", `/sessions/${sessionId}/messages?limit=100`);
@@ -988,6 +990,7 @@
         const data = await r.json();
         log("Session created ✓", "log-ok");
         activeSession = data;
+        loadFiles();
         if (activeRoom) loadSessions("room", activeRoom.id);
         else if (activeAgent) loadSessions("agent", activeAgent.id);
         document.getElementById("chatMessages").innerHTML = "";
@@ -1187,9 +1190,19 @@
     window.addEventListener("load", () => setTimeout(checkHealth, 300));
 
     /* ─── Files ─── */
-    async function loadRoomFiles(roomId) {
+    async function loadFiles() {
       try {
-        const r = await api("GET", `/rooms/${roomId}/files`);
+        let url = "";
+        if (activeRoom) {
+          url = `/rooms/${activeRoom.id}/files`;
+        } else if (activeAgent && activeSession) {
+          url = `/sessions/${activeSession.id}/files`;
+        } else {
+          document.getElementById("roomFiles").style.display = "none";
+          return;
+        }
+
+        const r = await api("GET", url);
         if (!r.ok) { log("Failed to load files", "log-err"); return; }
         const files = await r.json();
         const rf = document.getElementById("roomFiles");
@@ -1211,7 +1224,7 @@
     }
 
     async function uploadFile() {
-      if (!activeRoom) return;
+      if (!activeRoom && !activeSession) return;
       const fileInput = document.getElementById("fileUploadInput");
       const file = fileInput.files[0];
       if (!file) return;
@@ -1222,14 +1235,22 @@
       try {
         BASE = document.getElementById("apiUrl").value.replace(/\/+$/, "");
         log(`Uploading ${file.name}...`);
-        const r = await fetch(BASE + `/rooms/${activeRoom.id}/files`, {
+
+        let url = "";
+        if (activeRoom) {
+          url = BASE + `/rooms/${activeRoom.id}/files`;
+        } else if (activeAgent && activeSession) {
+          url = BASE + `/sessions/${activeSession.id}/files`;
+        }
+
+        const r = await fetch(url, {
           method: "POST",
           headers: { "Authorization": AUTH },
           body: fd
         });
         if (r.ok) {
           log(`File ${file.name} uploaded ✓`, "log-ok");
-          loadRoomFiles(activeRoom.id);
+          loadFiles();
         } else {
           const err = await r.json();
           log("Upload failed: " + JSON.stringify(err), "log-err");

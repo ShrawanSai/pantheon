@@ -77,6 +77,7 @@ def make_web_search_tool_execute(
 def make_read_file_tool_execute(
     *,
     room_id: str | None,
+    session_id: str | None = None,
     db: AsyncSession,
     file_tool: FileReadTool,
     telemetry_sink: TelemetrySink | None = None,
@@ -85,21 +86,21 @@ def make_read_file_tool_execute(
     async def read_file(file_id: str) -> str:
         """Read an uploaded file by file id and return parsed content."""
         started = time.monotonic()
-        if room_id is None:
+        if room_id is None and session_id is None:
             _emit_telemetry(
                 telemetry_sink,
                 ToolInvocationTelemetry(
                     tool_name="file_read",
                     input_json=json.dumps({"file_id": file_id}),
-                    output_json=json.dumps({"error": "file_read is unavailable outside room sessions"}),
+                    output_json=json.dumps({"error": "file_read requires either a room_id or session_id"}),
                     status="error",
                     latency_ms=int((time.monotonic() - started) * 1000),
                 ),
             )
-            return "File read is unavailable outside room-scoped sessions."
+            return "File read is unavailable without an active room or session scoped context."
 
         try:
-            result = await file_tool.read(file_id=file_id, room_id=room_id, db=db)
+            result = await file_tool.read(file_id=file_id, room_id=room_id, session_id=session_id, db=db)
             if result.status == "completed":
                 content = result.content or ""
                 _emit_telemetry(

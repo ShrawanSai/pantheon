@@ -1135,6 +1135,16 @@ async def create_turn_stream(
                 system_messages.append(ContextMessage(role="system", content=f"Available room files:\n{files_list}"))
         else:
             system_messages.append(ContextMessage(role="system", content="Session mode: standalone"))
+            
+            files_result = await db.scalars(
+                select(UploadedFile)
+                .where(UploadedFile.session_id == session.id)
+                .order_by(UploadedFile.created_at.desc())
+            )
+            files = files_result.all()
+            if files:
+                files_list = "\n".join(f"- {f.filename} (ID: {f.id})" for f in files)
+                system_messages.append(ContextMessage(role="system", content=f"Available session files:\n{files_list}"))
 
         try:
             primary_context = context_manager.prepare(
