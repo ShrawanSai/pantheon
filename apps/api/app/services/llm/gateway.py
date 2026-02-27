@@ -38,6 +38,7 @@ class GatewayRequest:
     max_output_tokens: int
     allowed_tools: tuple[str, ...] = ()
     response_schema: Type[BaseModel] | None = None
+    stop_sequences: list[str] | None = None
 
 @dataclass(frozen=True)
 class GatewayResponse:
@@ -128,6 +129,9 @@ class OpenAICompatibleGateway:
                     "schema": schema,
                 },
             }
+        
+        if request.stop_sequences:
+            extra_kwargs["stop"] = request.stop_sequences
 
         response = await self._client.chat.completions.create(
             model=model_id,
@@ -161,7 +165,7 @@ class OpenAICompatibleGateway:
         # If structured output was requested, parse the JSON to extract fields
         thinking = None
         raw_json = None
-        if request.response_schema and not tool_calls:
+        if request.response_schema and not tools:
             raw_json = text
             try:
                 parsed = json.loads(text)
@@ -194,13 +198,18 @@ class OpenAICompatibleGateway:
         provider_model_future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
 
         async def _iter_chunks() -> AsyncIterator[str]:
+            extra_kwargs: dict[str, Any] = {}
+            if request.stop_sequences:
+                extra_kwargs["stop"] = request.stop_sequences
+                
             try:
                 stream_response = await self._client.chat.completions.create(
                     model=model_id,
                     messages=_build_openai_messages(request.messages),
                     max_tokens=request.max_output_tokens,
                     stream=True,
-                    stream_options={"include_usage": True}
+                    stream_options={"include_usage": True},
+                    **extra_kwargs
                 )
                 
                 output_parts = []

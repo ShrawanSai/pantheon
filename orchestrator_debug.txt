@@ -276,3 +276,126 @@ USER INPUT: Ask each CEO to do an analysis of the other CEOs (in the council) co
 PRIOR OUTPUTS: YES
 RAW LLM RESPONSE: {"selected_agent_keys": []}
 PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: All CEOs, rate this idea: Pens that can write in space
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('elon', 'sundar', 'sam')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Rate the idea: pens that can write in space
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar", "sam"]}
+PARSED KEYS: ['elon', 'sundar', 'sam'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs (in the council) companies
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys": ["elon", "sundar", "sam"]}
+PARSED KEYS: ['elon', 'sundar', 'sam'] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs (in the council) companies
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"selected_agent_keys": []}
+PARSED KEYS: [] OR None
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs (in the council) companies
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "elon", "instruction": "Analyze the companies led by Sundar Pichai (Google) and Sam Altman (OpenAI), focusing on their current market position, innovation strategies, and potential future impact, from the perspective of an AI and space technology leader."}, {"agent_key": "sundar", "instruction": "Analyze the companies led by Elon Musk (Grok AI, xAI, SpaceX) and Sam Altman (OpenAI), focusing on their current market position, innovation strategies, and potential future impact, from the perspective of a Google CEO."}, {"agent_key": "sam", "instruction": "Analyze the companies led by Elon Musk (Grok AI, xAI, SpaceX) and Sundar Pichai (Google), focusing on their current market position, innovation strategies, and potential future impact, from the perspective of an OpenAI CEO."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs (in the council) companies
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "elon", "instruction": "Analyze the current strategies, market position, and future prospects of Google (Sundar Pichai's company) and OpenAI (Sam Altman's company). Focus on areas like AI development, innovation, market competition, and potential synergies or rivalries with your own ventures."}, {"agent_key": "sundar", "instruction": "Analyze the current strategies, market position, and future prospects of xAI/SpaceX (Elon Musk's companies) and OpenAI (Sam Altman's company). Focus on areas like AI development, space technology, innovation, market competition, and potential synergies or rivalries with Google."}, {"agent_key": "sam", "instruction": "Analyze the current strategies, market position, and future prospects of xAI/SpaceX (Elon Musk's companies) and Google (Sundar Pichai's company). Focus on areas like AI development, innovation, market competition, and potential synergies or rivalries with OpenAI."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: @sundar be more critical
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "sundar", "instruction": "Provide a more critical perspective on the topic being discussed, highlighting potential downsides or challenges."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: @sundar be more critical
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {
+  "assignments": []
+}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: @sam be more critical
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "sam",
+      "instruction": "Be more critical about the previous response, providing a detailed critique and identifying areas for improvement or alternative viewpoints, assuming an adversarial stance to ensure robust evaluation of the provided information as Sam Altman."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: @sam be more critical
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "elon", "instruction": "You are Elon Musk. Respond to Sam's critique of Sundar from the perspective of an entrepreneur who embraces risk and rapid iteration. Specifically, address Sam's points about 'singular vision,' 'institutional checks and balances,' and 'pure-play' ventures. Emphasize how these are often strengths, not weaknesses, in achieving ambitious goals, drawing parallels to SpaceX's success. Counter Sam's suggestion about your approach being for protecting an 'existing empire' instead of 'accelerating humanity towards a better future'."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: @sam be more critical
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: ```json
+{
+  "assignments": []
+}
+```
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: Ask each CEO to do an analysis of the other CEOs (in the council) companies
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "elon", "instruction": "Analyze the companies founded or led by Sundar Pichai (Google) and Sam Altman (OpenAI), focusing on their current market position, innovations, and potential future impact. Provide a critical perspective including both strengths and weaknesses."}, {"agent_key": "sundar", "instruction": "Analyze the companies founded or led by Elon Musk (Grok AI, xAI, SpaceX) and Sam Altman (OpenAI), focusing on their current market position, innovations, and potential future impact. Provide a critical perspective including both strengths and weaknesses."}, {"agent_key": "sam", "instruction": "Analyze the companies founded or led by Elon Musk (Grok AI, xAI, SpaceX) and Sundar Pichai (Google), focusing on their current market position, innovations, and potential future impact. Provide a critical perspective including both strengths and weaknesses."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: @sam be more critical
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "sam", "instruction": "Provide a more critical assessment of the previous response."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: @sam be more critical
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: ```json
+{
+  "assignments": []
+}
+```
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['elon', 'sundar', 'sam']
+USER INPUT: #elon comment about microsoft
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "elon",
+      "instruction": "Comment on Microsoft's current market position, innovations, and their competitive landscape, particularly in areas intersecting with AI, space, or electric vehicles, from your perspective as Elon Musk."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['sundar', 'sam', 'elon']
+USER INPUT: ceos, introduce yourself
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "sundar", "instruction": "Introduce yourself as Sundar Pichai, CEO of Google."}, {"agent_key": "sam", "instruction": "Introduce yourself as Sam Altman, CEO of OpenAI."}, {"agent_key": "elon", "instruction": "Introduce yourself as Elon Musk, CEO of Grok AI, xAI, and SpaceX."}]}

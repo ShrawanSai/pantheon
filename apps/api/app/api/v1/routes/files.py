@@ -6,6 +6,7 @@ from uuid import uuid4
 from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from apps.api.app.core.config import Settings, get_settings
 from apps.api.app.db.models import UploadedFile
@@ -93,3 +94,24 @@ async def upload_room_file(
     await arq_redis.enqueue_job("file_parse", file_row.id)
     return _to_uploaded_file_read(file_row)
 
+
+@router.get(
+    "/{room_id}/files",
+    response_model=list[UploadedFileRead],
+)
+async def list_room_files(
+    room_id: str,
+    current_user: dict[str, str] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[UploadedFileRead]:
+    user_id = current_user["user_id"]
+    await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+
+    rows = (
+        await db.scalars(
+            select(UploadedFile)
+            .where(UploadedFile.room_id == room_id)
+            .order_by(UploadedFile.created_at.desc())
+        )
+    ).all()
+    return [_to_uploaded_file_read(row) for row in rows]

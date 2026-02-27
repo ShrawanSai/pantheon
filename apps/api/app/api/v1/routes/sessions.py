@@ -29,6 +29,7 @@ from apps.api.app.db.models import (
     SessionSummary,
     Turn,
     TurnContextAudit,
+    UploadedFile,
 )
 from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.auth import get_current_user
@@ -350,17 +351,18 @@ async def get_session_messages(
     session, _, _ = await _get_owned_active_session_or_404(db, session_id=session_id, user_id=user_id)
     conditions = (Message.session_id == session.id,)
     total = int(await db.scalar(select(func.count(Message.id)).where(*conditions)) or 0)
-    rows = await db.scalars(
+    rows_list = (await db.scalars(
         select(Message)
         .where(*conditions)
         .order_by(
-            Message.created_at.asc(),
-            case((Message.role == "user", 0), else_=1).asc(),
-            Message.id.asc(),
+            Message.created_at.desc(),
+            case((Message.role == "user", 1), else_=0).desc(),
+            Message.id.desc(),
         )
         .limit(limit)
         .offset(offset)
-    )
+    )).all()
+    rows_list.reverse()
     return SessionMessageListRead(
         messages=[
             SessionMessageRead(
@@ -371,7 +373,7 @@ async def get_session_messages(
                 turn_id=row.turn_id,
                 created_at=row.created_at,
             )
-            for row in rows.all()
+            for row in rows_list
         ],
         total=total,
     )
@@ -450,11 +452,21 @@ async def create_turn(
                 .order_by(RoomAgent.position.asc(), RoomAgent.created_at.asc())
             )
         ).all()
-        active_room_agent = room_agents[0] if room_agents else None
         manual_tag_selected_agents: list[RoomAgent] = []
+        tagged_keys = _extract_tagged_agent_keys(payload.message)
+        by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
+        manual_tag_selected_agents = [by_key[key] for key in tagged_keys if key in by_key]
 
-        if room.current_mode in {"manual", "tag"}:
-            tagged_keys = _extract_tagged_agent_keys(payload.message)
+        turn_mode = room.current_mode
+
+        if manual_tag_selected_agents:
+            if len(manual_tag_selected_agents) > 1:
+                turn_mode = "roundtable"
+            else:
+                turn_mode = "tag"
+            active_room_agent = manual_tag_selected_agents[0]
+            selected_assignments = manual_tag_selected_agents
+        elif room.current_mode in {"manual", "tag"}:
             if not tagged_keys:
                 raise HTTPException(
                     status_code=422,
@@ -463,48 +475,40 @@ async def create_turn(
                         "message": "Manual mode requires at least one tagged agent (e.g., @writer).",
                     },
                 )
-            by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
-            manual_tag_selected_agents = [by_key[key] for key in tagged_keys if key in by_key]
-            if not manual_tag_selected_agents:
-                raise HTTPException(
-                    status_code=422,
-                    detail={
-                        "code": "no_valid_tagged_agents",
-                        "message": "No tagged agents matched this room.",
-                    },
-                )
-            active_room_agent = manual_tag_selected_agents[0]
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "no_valid_tagged_agents",
+                    "message": "No tagged agents matched this room.",
+                },
+            )
         elif room.current_mode == "orchestrator":
             if not room_agents:
                 raise HTTPException(
                     status_code=422,
                     detail={
-                    "code": "no_room_agents",
-                    "message": "Orchestrator mode requires at least one agent.",
-                },
-            )
+                        "code": "no_room_agents",
+                        "message": "Orchestrator mode requires at least one agent.",
+                    },
+                )
             active_room_agent = room_agents[0]
-        if room.current_mode == "roundtable" and not room_agents:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "no_room_agents",
-                    "message": "Round table mode requires at least one agent in the room.",
-                },
-            )
-
-        if room.current_mode in ("roundtable", "orchestrator"):
             selected_assignments = room_agents
-        elif room.current_mode in {"manual", "tag"}:
-            selected_assignments = manual_tag_selected_agents or (
-                [active_room_agent] if active_room_agent is not None else []
-            )
+        elif room.current_mode == "roundtable":
+            if not room_agents:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "no_room_agents",
+                        "message": "Round table mode requires at least one agent in the room.",
+                    },
+                )
+            active_room_agent = room_agents[0]
+            selected_assignments = room_agents
         else:
             selected_assignments = [active_room_agent] if active_room_agent is not None else []
 
         selected_agents = [_room_agent_to_selected_agent(assignment) for assignment in selected_assignments]
         active_agent = _room_agent_to_selected_agent(active_room_agent) if active_room_agent else None
-        turn_mode = room.current_mode
     else:
         if standalone_agent is None:
             raise HTTPException(status_code=404, detail="Session not found.")
@@ -932,11 +936,23 @@ async def create_turn_stream(
                 .order_by(RoomAgent.position.asc(), RoomAgent.created_at.asc())
             )
         ).all()
-        active_room_agent = room_agents[0] if room_agents else None
         manual_tag_selected_agents: list[RoomAgent] = []
+        tagged_keys = _extract_tagged_agent_keys(payload.message)
+        by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
+        manual_tag_selected_agents = [by_key[key] for key in tagged_keys if key in by_key]
 
-        if room.current_mode in {"manual", "tag"}:
-            tagged_keys = _extract_tagged_agent_keys(payload.message)
+        turn_mode = room.current_mode
+
+        if manual_tag_selected_agents:
+            # Explicitly tagged agents bypass current mode
+            if len(manual_tag_selected_agents) > 1:
+                turn_mode = "roundtable"
+            else:
+                turn_mode = "tag"
+                
+            active_room_agent = manual_tag_selected_agents[0]
+            selected_assignments = manual_tag_selected_agents
+        elif room.current_mode in {"manual", "tag"}:
             if not tagged_keys:
                 raise HTTPException(
                     status_code=422,
@@ -945,48 +961,40 @@ async def create_turn_stream(
                         "message": "Manual mode requires at least one tagged agent (e.g., @writer).",
                     },
                 )
-            by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
-            manual_tag_selected_agents = [by_key[key] for key in tagged_keys if key in by_key]
-            if not manual_tag_selected_agents:
-                raise HTTPException(
-                    status_code=422,
-                    detail={
-                        "code": "no_valid_tagged_agents",
-                        "message": "No tagged agents matched this room.",
-                    },
-                )
-            active_room_agent = manual_tag_selected_agents[0]
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "no_valid_tagged_agents",
+                    "message": "No tagged agents matched this room.",
+                },
+            )
         elif room.current_mode == "orchestrator":
             if not room_agents:
                 raise HTTPException(
                     status_code=422,
                     detail={
-                    "code": "no_room_agents",
-                    "message": "Orchestrator mode requires at least one agent.",
-                },
-            )
+                        "code": "no_room_agents",
+                        "message": "Orchestrator mode requires at least one agent.",
+                    },
+                )
             active_room_agent = room_agents[0]
-        if room.current_mode == "roundtable" and not room_agents:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "no_room_agents",
-                    "message": "Round table mode requires at least one agent in the room.",
-                },
-            )
-
-        if room.current_mode in ("roundtable", "orchestrator"):
             selected_assignments = room_agents
-        elif room.current_mode in {"manual", "tag"}:
-            selected_assignments = manual_tag_selected_agents or (
-                [active_room_agent] if active_room_agent is not None else []
-            )
+        elif room.current_mode == "roundtable":
+            if not room_agents:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "no_room_agents",
+                        "message": "Round table mode requires at least one agent in the room.",
+                    },
+                )
+            active_room_agent = room_agents[0]
+            selected_assignments = room_agents
         else:
             selected_assignments = [active_room_agent] if active_room_agent is not None else []
 
         selected_agents = [_room_agent_to_selected_agent(assignment) for assignment in selected_assignments]
         active_agent = _room_agent_to_selected_agent(active_room_agent) if active_room_agent else None
-        turn_mode = room.current_mode
     else:
         if standalone_agent is None:
             raise HTTPException(status_code=404, detail="Session not found.")
@@ -994,11 +1002,7 @@ async def create_turn_stream(
         selected_agents = [active_agent]
         turn_mode = "standalone"
 
-    if turn_mode == "orchestrator":
-        if any(get_permitted_tool_names(assignment.agent) for assignment in room_agents if assignment.agent is not None):
-            raise HTTPException(status_code=422, detail="streaming not supported when tools are enabled")
-    elif any(agent.tool_permissions for agent in selected_agents):
-        raise HTTPException(status_code=422, detail="streaming not supported when tools are enabled")
+
 
     if get_enforcement_enabled(settings.credit_enforcement_enabled):
         wallet = await wallet_service.get_or_create_wallet(db, user_id=user_id)
@@ -1119,6 +1123,16 @@ async def create_turn_stream(
             system_messages.append(ContextMessage(role="system", content=f"Room mode: {turn_mode}"))
             if room.goal:
                 system_messages.append(ContextMessage(role="system", content=f"Room goal: {room.goal}"))
+            
+            files_result = await db.scalars(
+                select(UploadedFile)
+                .where(UploadedFile.room_id == room.id)
+                .order_by(UploadedFile.created_at.desc())
+            )
+            files = files_result.all()
+            if files:
+                files_list = "\n".join(f"- {f.filename} (ID: {f.id})" for f in files)
+                system_messages.append(ContextMessage(role="system", content=f"Available room files:\n{files_list}"))
         else:
             system_messages.append(ContextMessage(role="system", content="Session mode: standalone"))
 
@@ -1225,6 +1239,11 @@ async def create_turn_stream(
         db.add(turn)
         await db.flush()
 
+        base_msg_time = turn.created_at
+        if base_msg_time is None:
+            await db.refresh(turn, ["created_at"])
+            base_msg_time = turn.created_at
+
         db.add(
             Message(
                 id=str(uuid4()),
@@ -1237,6 +1256,7 @@ async def create_turn_stream(
                 agent_name=None,
                 mode=turn_mode,
                 content=payload.message,
+                created_at=base_msg_time,
             )
         )
         for trace_agent, tool_calls in state.tool_trace_entries:
@@ -1252,16 +1272,10 @@ async def create_turn_stream(
                         source_agent_key=trace_agent.agent_key,
                         agent_name=trace_agent.name,
                         mode=turn_mode,
-                        content=f"{tool_call.tool_name}({tool_call.input_json})",
+                        content=f"Tool Call: {tool_call.tool_name}({tool_call.input_json}) -> {tool_call.output_json}",
+                        created_at=base_msg_time,
                     )
                 )
-                db.add(
-                    Message(
-                        id=str(uuid4()),
-                        turn_id=turn.id,
-                created_at=base_msg_time,
-            )
-        )
 
         for i, (entry_agent, entry_content) in enumerate(state.assistant_entries, start=1):
             db.add(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 from typing import Protocol
@@ -32,13 +32,20 @@ def _strip_json_fences(text: str) -> str:
 @dataclass(frozen=True)
 class OrchestratorRoutingDecision:
     selected_agent_keys: tuple[str, ...]
+    assignments: dict[str, str] = field(default_factory=dict) # key -> instruction
 
     @property
     def selected_agent_key(self) -> str:
-        return self.selected_agent_keys[0]
+        return self.selected_agent_keys[0] if self.selected_agent_keys else ""
+
+
+class AgentAssignment(BaseModel):
+    agent_key: str
+    instruction: str
 
 
 class _RoutingResponse(BaseModel):
+    assignments: list[AgentAssignment] = []
     selected_agent_keys: list[str] = []
     selected_agent_key: str | None = None
 
@@ -83,15 +90,20 @@ def _build_manager_system_prompt(
         [
             "",
             "ROUTING RULES:",
-            "1. Select up to 3 best agents to handle the user's request.",
-            "2. If the user asks for multiple perspectives, or if the task inherently applies to multiple agents (e.g. 'I want all CEOs...', 'What do you guys think...'), you MUST select ALL relevant agents at once in this single round.",
+            "1. Select up to 3 best agents to handle the user's request. For each agent, provide a specific, detailed instruction on what they should contribute.",
+            "2. If the user asks for multiple perspectives, or if the task inherently applies to multiple agents, you MUST select ALL relevant agents at once in this single round.",
             "3. DO NOT select an agent that has already provided an output in prior rounds unless they explicitly need to respond to what another agent just said.",
             "4. Prefer running agents concurrently (selecting multiple keys at once) rather than sequencing them across multiple rounds, unless they depend on each other's output.",
             "",
             "Respond ONLY with valid JSON in exactly this format:",
-            '{"selected_agent_keys": ["<key1>", "<key2>"]}',
+            '{',
+            '  "assignments": [',
+            '    {"agent_key": "<key1>", "instruction": "Provide a technical overview of..."},',
+            '    {"agent_key": "<key2>", "instruction": "Analyze the security implications of..."}',
+            '  ]',
+            '}',
             "",
-            "CRITICAL: `selected_agent_keys` MUST be a JSON array of strings.",
+            "CRITICAL: `assignments` MUST be a JSON array of objects with `agent_key` and `instruction`.",
             "Do not include any other text, explanation, or markdown.",
         ]
     )
@@ -196,11 +208,16 @@ async def route_turn(
             
         parsed = _RoutingResponse.model_validate_json(_strip_json_fences(response.text))
         
-        with open("orchestrator_debug.txt", "a", encoding="utf-8") as f:
-            f.write(f"PARSED KEYS: {parsed.selected_agent_keys} OR {parsed.selected_agent_key}\n")
-            
-        selected_agent_keys = parsed.selected_agent_keys or (
-            [parsed.selected_agent_key] if parsed.selected_agent_key else []
+        assignments_dict: dict[str, str] = {
+            a.agent_key.strip().lower(): a.instruction 
+            for a in parsed.assignments 
+            if a.agent_key
+        }
+
+        selected_agent_keys = (
+            [a.agent_key for a in parsed.assignments] 
+            if parsed.assignments 
+            else (parsed.selected_agent_keys or ([parsed.selected_agent_key] if parsed.selected_agent_key else []))
         )
 
         normalized_keys: list[str] = []
@@ -226,10 +243,16 @@ async def route_turn(
 
     by_key = {agent.agent_key.lower(): agent for agent in agents}
     selected: list[str] = []
+    final_assignments: dict[str, str] = {}
+    
     for key in normalized_keys:
         mapped = by_key.get(key.lower())
         if mapped is not None:
-            selected.append(mapped.agent_key)
+            active_key = mapped.agent_key
+            selected.append(active_key)
+            # Carry over the instruction if we have it
+            instr = assignments_dict.get(key.lower(), "Please respond to the user's request.")
+            final_assignments[active_key] = instr
 
     if not selected:
         if not prior_round_outputs:
@@ -240,9 +263,12 @@ async def route_turn(
             return fallback
         else:
             # On subsequent rounds, empty selection is valid and means stop
-            return OrchestratorRoutingDecision(selected_agent_keys=())
+            return OrchestratorRoutingDecision(selected_agent_keys=(), assignments={})
 
-    return OrchestratorRoutingDecision(selected_agent_keys=tuple(selected))
+    return OrchestratorRoutingDecision(
+        selected_agent_keys=tuple(selected),
+        assignments=final_assignments
+    )
 
 
 async def evaluate_orchestrator_round(
