@@ -339,6 +339,35 @@ async def delete_session(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.delete("/agents/{agent_id}/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent_session(
+    agent_id: str,
+    session_id: str,
+    current_user: dict[str, str] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    user_id = current_user["user_id"]
+    agent = await db.scalar(
+        select(Agent).where(Agent.id == agent_id, Agent.deleted_at.is_(None), Agent.owner_user_id == user_id)
+    )
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    session = await db.scalar(
+        select(Session).where(
+            Session.id == session_id,
+            Session.agent_id == agent_id,
+            Session.deleted_at.is_(None),
+        )
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    session.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/sessions/{session_id}/messages", response_model=SessionMessageListRead)
 async def get_session_messages(
     session_id: str,
@@ -1132,7 +1161,8 @@ async def create_turn_stream(
             files = files_result.all()
             if files:
                 files_list = "\n".join(f"- {f.filename} (ID: {f.id})" for f in files)
-                system_messages.append(ContextMessage(role="system", content=f"Available room files:\n{files_list}"))
+                file_msg = f"The user has uploaded the following files to this room:\n{files_list}\n\nTo read a file, use the 'file_read' tool with its ID."
+                system_messages.append(ContextMessage(role="system", content=file_msg))
         else:
             system_messages.append(ContextMessage(role="system", content="Session mode: standalone"))
             
@@ -1144,7 +1174,8 @@ async def create_turn_stream(
             files = files_result.all()
             if files:
                 files_list = "\n".join(f"- {f.filename} (ID: {f.id})" for f in files)
-                system_messages.append(ContextMessage(role="system", content=f"Available session files:\n{files_list}"))
+                file_msg = f"The user has attached the following files to this session:\n{files_list}\n\nTo read a file, use the 'file_read' tool with its ID."
+                system_messages.append(ContextMessage(role="system", content=file_msg))
 
         try:
             primary_context = context_manager.prepare(

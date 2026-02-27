@@ -399,3 +399,120 @@ AGENT KEYS: ['sundar', 'sam', 'elon']
 USER INPUT: ceos, introduce yourself
 PRIOR OUTPUTS: NO
 RAW LLM RESPONSE: {"assignments": [{"agent_key": "sundar", "instruction": "Introduce yourself as Sundar Pichai, CEO of Google."}, {"agent_key": "sam", "instruction": "Introduce yourself as Sam Altman, CEO of OpenAI."}, {"agent_key": "elon", "instruction": "Introduce yourself as Elon Musk, CEO of Grok AI, xAI, and SpaceX."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: Hello all, introduce yourself
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "stark",
+      "instruction": "Introduce yourself as Tony Stark, aka Ironman. Briefly mention your role and capabilities including using search and file_read tools."
+    },
+    {
+      "agent_key": "modi",
+      "instruction": "Introduce yourself as Narendra Modi, PM of India. Briefly mention your role and capabilities including using the search tool."
+    },
+    {
+      "agent_key": "elon",
+      "instruction": "Introduce yourself as Elon Musk of Grok AI, xAI and Spacex. Briefly mention your role and that you do not have specific tools for this interaction."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: modi can respond
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "modi", "instruction": "Respond to the user's request as Narendra Modi."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: get stark and modi to argue about blockchain based voting in elections. stark is pro and modi agains
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "stark", "instruction": "Argue in favor of blockchain-based voting, highlighting its benefits such as security, transparency, and immutability. Provide technical justifications for your points."}, {"agent_key": "modi", "instruction": "Argue against blockchain-based voting, focusing on potential challenges like scalability, accessibility in diverse populations, regulatory hurdles, and the digital divide. Explain the complexities of implementing such a system in a large-scale democratic election."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: get stark and modi to argue about blockchain based voting in elections. stark is pro and modi agains
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": []}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: get elon to review
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "elon",
+      "instruction": "Review the user's request, providing your perspective on it."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: so who won?
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": []
+}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: so who won?
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: ```json
+{
+  "assignments": [
+    {
+      "agent_key": "modi",
+      "instruction": "Reflect on Tony Stark's and Elon Musk's previous comments and provide your perspective on who 'won' the debate regarding blockchain for elections, specifically addressing if your initial concerns about scalability and the digital divide have been adequately addressed or if they still represent significant obstacles from a national implementation perspective."
+    },
+    {
+      "agent_key": "elon",
+      "instruction": "Considering Tony Stark's latest statement, provide your updated view on 'who won' the debate about blockchain in elections. Specifically, reaffirm or adjust your stance on the practicalities and timelines of overcoming the scalability and digital divide challenges that Modi brought up, and whether Stark's 'vision' is indeed 'correct' and the 'challenges are solvable' within a realistic timeframe for a nation like India."
+    }
+  ]
+}
+```
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: No who won the debate?
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": []
+}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: make elon the judge
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "elon",
+      "instruction": "The user wants you to be the judge. Acknowledge this role and await further instructions from the user regarding what you are judging or what your role as judge entails."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: judge bith modis and starks point of views
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "stark",
+      "instruction": "Please present your point of view or a summary of your previous points if this is a continuation."
+    },
+    {
+      "agent_key": "modi",
+      "instruction": "Please present your point of view or a summary of your previous points if this is a continuation."
+    }
+  ]
+}

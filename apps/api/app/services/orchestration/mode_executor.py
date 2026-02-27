@@ -148,6 +148,11 @@ class PurePythonModeExecutor:
                 # If tools are permitted, just use generate to ensure tool_calls are cleanly extracted.
                 # If streaming is requested and no tools, use stream mode.
                 if agent.tool_permissions or not event_sink:
+                    # Debug: Log the first message to verify separators
+                    if messages:
+                         _LOGGER.info("FINAL PAYLOAD FIRST MSG: %s", messages[0].content)
+                         _LOGGER.info("FINAL PAYLOAD LAST MSG: %s", messages[-1].content)
+                    
                     response = await self._llm_gateway.generate(req)
                     state.usage_entries.append((
                         agent.agent_id,

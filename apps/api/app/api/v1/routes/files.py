@@ -17,10 +17,14 @@ from apps.api.app.dependencies.rooms import get_owned_active_room_or_404
 from apps.api.app.schemas.files import UploadedFileRead
 from apps.api.app.services.storage.supabase_storage import StorageService, get_storage_service
 from apps.api.app.api.v1.routes.sessions import _get_owned_active_session_or_404
+from apps.api.app.workers.jobs.file_parse import _extract_parsed_text
+
+import logging
+_LOGGER = logging.getLogger(__name__)
 
 router = APIRouter(tags=["files"])
 
-ALLOWED_FILE_EXTENSIONS = {"txt", "md", "csv"}
+ALLOWED_FILE_EXTENSIONS = {"txt", "md", "csv", "pdf", "docx", "xlsx", "xls"}
 
 
 def _build_storage_key(*, room_id: str, file_id: str, filename: str) -> str:
@@ -66,7 +70,7 @@ async def upload_room_file(
         raise HTTPException(status_code=422, detail="Filename is required.")
     extension = Path(filename).suffix.lower().lstrip(".")
     if extension not in ALLOWED_FILE_EXTENSIONS:
-        raise HTTPException(status_code=422, detail="Unsupported file format. Allowed: txt, md, csv.")
+        raise HTTPException(status_code=422, detail="Unsupported file format. Allowed: txt, md, csv, pdf, docx, xlsx, xls.")
 
     payload = await file.read()
     file_size = len(payload)
@@ -92,7 +96,24 @@ async def upload_room_file(
     await db.commit()
     await db.refresh(file_row)
 
-    await arq_redis.enqueue_job("file_parse", file_row.id)
+    # Try inline parsing first (arq worker may not be running)
+    try:
+        parsed_text = _extract_parsed_text(filename, payload)
+        file_row.parse_status = "completed"
+        file_row.parsed_text = parsed_text
+        file_row.error_message = None
+        await db.commit()
+        await db.refresh(file_row)
+    except Exception as e:
+        _LOGGER.warning("Inline parse failed for %s: %s", filename, e, exc_info=True)
+        try:
+            await arq_redis.enqueue_job("file_parse", file_row.id)
+        except Exception as arq_err:
+            _LOGGER.warning("arq enqueue also failed for file %s: %s", file_row.id, arq_err)
+            file_row.parse_status = "failed"
+            file_row.error_message = f"Inline parse error: {e}"
+            await db.commit()
+            await db.refresh(file_row)
     return _to_uploaded_file_read(file_row)
 
 
@@ -140,7 +161,7 @@ async def upload_session_file(
         raise HTTPException(status_code=422, detail="Filename is required.")
     extension = Path(filename).suffix.lower().lstrip(".")
     if extension not in ALLOWED_FILE_EXTENSIONS:
-        raise HTTPException(status_code=422, detail="Unsupported file format. Allowed: txt, md, csv.")
+        raise HTTPException(status_code=422, detail="Unsupported file format. Allowed: txt, md, csv, pdf, docx, xlsx, xls.")
 
     payload = await file.read()
     file_size = len(payload)
@@ -168,7 +189,24 @@ async def upload_session_file(
     await db.commit()
     await db.refresh(file_row)
 
-    await arq_redis.enqueue_job("file_parse", file_row.id)
+    # Try inline parsing first (arq worker may not be running)
+    try:
+        parsed_text = _extract_parsed_text(filename, payload)
+        file_row.parse_status = "completed"
+        file_row.parsed_text = parsed_text
+        file_row.error_message = None
+        await db.commit()
+        await db.refresh(file_row)
+    except Exception as e:
+        _LOGGER.warning("Inline parse failed for %s: %s", filename, e, exc_info=True)
+        try:
+            await arq_redis.enqueue_job("file_parse", file_row.id)
+        except Exception as arq_err:
+            _LOGGER.warning("arq enqueue also failed for file %s: %s", file_row.id, arq_err)
+            file_row.parse_status = "failed"
+            file_row.error_message = f"Inline parse error: {e}"
+            await db.commit()
+            await db.refresh(file_row)
     return _to_uploaded_file_read(file_row)
 
 
