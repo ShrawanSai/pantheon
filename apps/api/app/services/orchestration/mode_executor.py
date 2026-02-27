@@ -107,7 +107,8 @@ class PurePythonModeExecutor:
         agent: ActiveAgent, 
         base_messages: list[GatewayMessage], 
         db: AsyncSession,
-        event_sink: EventSink | None = None
+        event_sink: EventSink | None = None,
+        stop_sequences: list[str] | None = None
     ) -> tuple[str, bool]:
         telemetry_records: list[ToolInvocationTelemetry] = []
         
@@ -136,6 +137,7 @@ class PurePythonModeExecutor:
                     max_output_tokens=state.max_output_tokens,
                     allowed_tools=agent.tool_permissions,
                     response_schema=AgentResponse,
+                    stop_sequences=stop_sequences,
                 )
                 
                 if event_sink:
@@ -295,16 +297,51 @@ class PurePythonModeExecutor:
         ordered_agents = [
             agent for _, agent in sorted(enumerate(state.active_agents), key=_sort_key)
         ]
+        
+        other_names_lower = [a.name.lower() for a in state.active_agents]
 
         shared_history = []
         for agent in ordered_agents:
+            other_names_str = ", ".join(n for n in other_names_lower if n != agent.name.lower())
+            other_example = other_names_lower[0].title() if other_names_lower else "OtherAgent"
             base_messages = [
-                GatewayMessage(role="system", content=f"Room mode: roundtable\nAgent role: {agent.role_prompt}\n\nCRITICAL: You are {agent.name}. Respond ONLY with your own direct speech. DO NOT include your own name, name tags (like '[{agent.name}]:' or '{agent.name}:'), or dialogue for others. Start immediately with your content. You are participating in a group conversation; acknowledge the user or previous agent statements if relevant."),
+                GatewayMessage(role="system", content=f"Room mode: roundtable\nAgent role: {agent.role_prompt}\n\nCRITICAL: You are {agent.name}. Respond ONLY with your own direct speech. DO NOT include your own name, name tags (like '[{agent.name}]:' or '{agent.name}:'). Start immediately with your content. You are participating in a group conversation; acknowledge the user or previous agent statements if relevant.\n\nCRITICAL INSTRUCTION: When there is a tag to another agent beside you (e.g., @{other_example}), answer ONLY on your behalf. DO NOT write responses, dialogue, or script lines for any other agents ({other_names_str}). When you are finished with your own thought, STOP generating immediately.\n\nBAD EXAMPLE (Roleplaying others):\n[My thought about the topic.]\n\n{other_example}: [Their thought about the topic.]\n\nGOOD EXAMPLE (Answering only for myself):\n[My thought about the topic.]"),
                 *state.primary_context_messages,
                 *shared_history
             ]
             
-            text, success = await self._invoke_agent(state, agent, base_messages, db, event_sink)
+            stop_seqs = []
+            for n in other_names_lower:
+                if n != agent.name.lower():
+                    # Stop if the LLM tries to generate another agent's name followed by a colon
+                    stop_seqs.extend([f"\n{n.title()}:", f"{n.title()}:", f"\n{n.upper()}:", f"{n.upper()}:"])
+            stop_seqs.append("\n---")
+            # OpenAI limit is usually 4 stop sequences.
+            # We will truncate to 4 sequences max to avoid api errors, prioritizing the common cases.
+            stop_seqs = list(set(stop_seqs))[:4]
+            
+            text, success = await self._invoke_agent(state, agent, base_messages, db, event_sink, stop_sequences=stop_seqs)
+            
+            # Post-processing: truncate if LLM hallucinates another agent's turn
+            if success and text:
+                import re
+                lines = text.split('\n')
+                cutoff_idx = len(lines)
+                for i, line in enumerate(lines):
+                    line_strip = line.strip()
+                    if line_strip == "---" or line_strip.startswith("--- "):
+                        cutoff_idx = i
+                        break
+                    # Match "OtherName:" or "OtherName :"
+                    lower_line = line_strip.lower()
+                    if any(lower_line.startswith(f"{n}:") or lower_line.startswith(f"[{n}]") or lower_line.startswith(f"{n} says:") for n in other_names_lower if n != agent.name.lower()):
+                        # Only cut if it looks like a prefix, not a sentence
+                        if len(line_strip) < 100: # heuristic
+                            cutoff_idx = i
+                            break
+                if cutoff_idx < len(lines):
+                    text = '\n'.join(lines[:cutoff_idx]).strip()
+
             state.assistant_entries.append((agent, text))
             state.specialist_outputs.append((agent.name, text))
             
@@ -374,18 +411,24 @@ class PurePythonModeExecutor:
                     "target_agents": [a.name for a in round_assignments]
                 })
 
+            council_list = ", ".join(a.name for a in state.active_agents)
             for agent in round_assignments:
+                # Get the instruction for this specific agent from the routing result
+                instruction = routing.assignments.get(agent.agent_key, "Please provide your expertise on the user's request.")
+
                 base_messages = [
                     GatewayMessage(
                         role="system", 
                         content=(
                             f"CRITICAL INSTRUCTION: You are {agent.name}. {agent.role_prompt}\n\n"
                             f"You are currently in a meeting being moderated by an Orchestrating Manager. "
-                            f"The Manager has specifically called upon YOU ({agent.name}) to speak.\n\n"
+                            f"The Council consists of: {council_list}.\n\n"
+                            f"The Manager has specifically called upon YOU ({agent.name}) with these instructions:\n"
+                            f"'{instruction}'\n\n"
                             f"RULES:\n"
                             f"1. You MUST stay in character as {agent.name}.\n"
                             f"2. You are NOT the Manager. Do not describe the process, do not moderate the room, do not summarize, and do not assign tasks.\n"
-                            f"3. Respond ONLY with your own direct speech, answering the user's prompt from your unique perspective.\n"
+                            f"3. Respond ONLY with your own direct speech, answering the instruction from your unique perspective.\n"
                             f"4. DO NOT include your own name, name tags (like '[{agent.name}]:' or '{agent.name}:'), or narrative actions."
                         )
                     ),

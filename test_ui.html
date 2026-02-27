@@ -582,12 +582,23 @@
       <div id="chatView" style="display:none; flex:1; display:flex; flex-direction:column;">
         <div class="chat-header">
           <h3 id="chatRoomName">Room</h3>
-          <span class="mode-badge" id="chatModeBadge">manual</span>
+          <select class="mode-badge" id="chatModeBadge" onchange="changeRoomMode()"
+            style="background: var(--surface); color: var(--text); border: 1px solid var(--border); cursor: pointer;">
+            <option value="manual">manual</option>
+            <option value="roundtable">roundtable</option>
+            <option value="orchestrator">orchestrator</option>
+          </select>
+        </div>
+        <div class="chat-files" id="roomFiles"
+          style="padding:10px 28px; border-bottom:1px solid var(--border); display:none; flex-wrap:wrap; gap:10px; font-size:12px; color:var(--text-dim);">
         </div>
         <div class="chat-messages" id="chatMessages"></div>
         <div class="chat-input-area">
           <input id="chatInput" placeholder="Type a message... (use @agent_key for manual mode)"
             onkeydown="if(event.key==='Enter')sendMessage()">
+          <input type="file" id="fileUploadInput" style="display:none" onchange="uploadFile()" accept=".txt,.md,.csv">
+          <button class="btn-ghost" onclick="document.getElementById('fileUploadInput').click()" id="uploadBtn"
+            title="Upload File (txt, md, csv)">📎</button>
           <button class="btn-primary" onclick="sendMessage()" id="sendBtn">Send</button>
           <button class="btn-ghost" onclick="clearChat()">Clear</button>
         </div>
@@ -616,6 +627,15 @@
         </select>
         <label>Role Prompt</label>
         <textarea id="agentPrompt" placeholder="You are a helpful assistant..."></textarea>
+        <label>Tool Permissions</label>
+        <div style="display:flex;gap:15px;margin-bottom:15px;font-size:13px;">
+          <label style="display:flex;align-items:center;gap:5px;margin:0;font-weight:normal;">
+            <input type="checkbox" id="toolSearch" value="search"> Web Search
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;margin:0;font-weight:normal;">
+            <input type="checkbox" id="toolFileRead" value="file_read"> File Read
+          </label>
+        </div>
       </div>
       <div class="modal-foot">
         <button class="btn-ghost" onclick="hideModal('agentModal')">Cancel</button>
@@ -671,6 +691,7 @@
     let agents = [];
     let rooms = [];
     let activeRoom = null;
+    let activeAgent = null;
     let activeSession = null;
 
     function clearChat() {
@@ -732,13 +753,15 @@
     function renderAgents() {
       const el = document.getElementById("agentList");
       if (!agents.length) { el.innerHTML = '<div style="color:var(--text-dim);font-size:12px;">No agents yet</div>'; return; }
-      el.innerHTML = agents.map(a => `
-    <div class="item-card" title="${a.model_alias}">
+      el.innerHTML = agents.map(a => {
+        const toolsStr = a.tool_permissions && a.tool_permissions.length ? ` · [${a.tool_permissions.join(', ')}]` : '';
+        return `
+    <div class="item-card ${activeAgent && activeAgent.id === a.id ? 'active' : ''}" onclick="selectAgent('${a.id}')" title="${a.model_alias}">
       <div class="name">${a.name}</div>
-      <div class="meta">@${a.agent_key} · ${a.model_alias}</div>
+      <div class="meta">@${a.agent_key} · ${a.model_alias}${toolsStr}</div>
       <div class="delete-btn" onclick="deleteAgent('${a.id}', event)">×</div>
     </div>
-  `).join("");
+  `}).join("");
     }
 
     async function createAgent() {
@@ -746,12 +769,17 @@
       const key = document.getElementById("agentKey").value.trim();
       const model = document.getElementById("agentModel").value;
       const prompt = document.getElementById("agentPrompt").value.trim();
+
+      const tools = [];
+      if (document.getElementById("toolSearch").checked) tools.push("search");
+      if (document.getElementById("toolFileRead").checked) tools.push("file_read");
+
       if (!name || !key) { log("Name and key are required", "log-err"); return; }
       try {
         const r = await api("POST", "/agents", {
           name, agent_key: key, model_alias: model,
           role_prompt: prompt || "You are a helpful assistant.",
-          tool_permissions: []
+          tool_permissions: tools
         });
         if (r.ok) {
           log(`Agent "${name}" created ✓`, "log-ok");
@@ -759,6 +787,8 @@
           document.getElementById("agentName").value = "";
           document.getElementById("agentKey").value = "";
           document.getElementById("agentPrompt").value = "";
+          document.getElementById("toolSearch").checked = false;
+          document.getElementById("toolFileRead").checked = false;
           loadAgents();
         } else {
           const err = await r.json();
@@ -810,18 +840,64 @@
       } catch (e) { log("Create room error: " + e.message, "log-err"); }
     }
 
-    /* ─── Room Selection ─── */
+    /* ─── Room / Agent Selection ─── */
     async function selectRoom(id) {
       activeRoom = rooms.find(r => r.id === id);
+      activeAgent = null;
       renderRooms();
+      renderAgents();
       document.getElementById("chatView").style.display = "flex";
       document.getElementById("emptyState").style.display = "none";
       document.getElementById("chatRoomName").textContent = activeRoom.name;
-      document.getElementById("chatModeBadge").textContent = activeRoom.current_mode;
+      document.getElementById("chatModeBadge").style.display = "inline-block";
+      document.getElementById("chatModeBadge").value = activeRoom.current_mode;
+      document.getElementById("chatModeBadge").className = "mode-badge mode-" + activeRoom.current_mode;
       document.getElementById("roomAgentsSection").style.display = "block";
       document.getElementById("sessionsSection").style.display = "block";
+      document.getElementById("uploadBtn").style.display = "inline-block";
       loadRoomAgents(id);
-      loadSessions(id);
+      loadSessions("room", id);
+      loadRoomFiles(id);
+    }
+
+    async function selectAgent(id) {
+      activeAgent = agents.find(a => a.id === id);
+      activeRoom = null;
+      renderRooms();
+      renderAgents();
+      document.getElementById("chatView").style.display = "flex";
+      document.getElementById("emptyState").style.display = "none";
+      document.getElementById("chatRoomName").textContent = activeAgent.name;
+      document.getElementById("chatModeBadge").style.display = "none";
+      document.getElementById("roomAgentsSection").style.display = "none";
+      document.getElementById("sessionsSection").style.display = "block";
+      document.getElementById("uploadBtn").style.display = "none";
+      document.getElementById("roomFiles").style.display = "none";
+      loadSessions("agent", id);
+    }
+
+    async function changeRoomMode() {
+      if (!activeRoom) return;
+      const selectEl = document.getElementById("chatModeBadge");
+      const newMode = selectEl.value;
+      if (newMode === activeRoom.current_mode) return;
+
+      try {
+        const r = await api("PATCH", `/rooms/${activeRoom.id}/mode`, { mode: newMode });
+        if (r.ok) {
+          log(`Room mode changed to ${newMode} ✓`, "log-ok");
+          activeRoom.current_mode = newMode;
+          selectEl.className = "mode-badge mode-" + newMode;
+          loadRooms(); // Refresh sidebar list
+        } else {
+          const err = await r.json();
+          log("Change mode failed: " + JSON.stringify(err), "log-err");
+          selectEl.value = activeRoom.current_mode; // revert
+        }
+      } catch (e) {
+        log("Change mode error: " + e.message, "log-err");
+        selectEl.value = activeRoom.current_mode; // revert
+      }
     }
 
     async function deleteAgent(id, event) {
@@ -859,9 +935,10 @@
       } catch (e) { log("Delete room error: " + e.message, "log-err"); }
     }
 
-    async function loadSessions(roomId) {
+    async function loadSessions(type, id) {
       try {
-        const r = await api("GET", `/rooms/${roomId}/sessions`);
+        const url = type === "room" ? `/rooms/${id}/sessions` : `/agents/${id}/sessions`;
+        const r = await api("GET", url);
         const data = await r.json();
         renderSessions(data);
         if (data.length > 0 && !activeSession) {
@@ -888,7 +965,8 @@
     async function selectSession(sessionId) {
       activeSession = { id: sessionId };
       renderSessions([]); // Trigger re-render with active class
-      loadSessions(activeRoom.id); // Re-fetch to update list UI
+      if (activeRoom) loadSessions("room", activeRoom.id);
+      else if (activeAgent) loadSessions("agent", activeAgent.id);
 
       // Load messages
       try {
@@ -903,13 +981,15 @@
     }
 
     async function createNewSession() {
-      if (!activeRoom) return;
+      if (!activeRoom && !activeAgent) return;
       try {
-        const r = await api("POST", `/rooms/${activeRoom.id}/sessions`);
+        const url = activeRoom ? `/rooms/${activeRoom.id}/sessions` : `/agents/${activeAgent.id}/sessions`;
+        const r = await api("POST", url);
         const data = await r.json();
         log("Session created ✓", "log-ok");
         activeSession = data;
-        loadSessions(activeRoom.id);
+        if (activeRoom) loadSessions("room", activeRoom.id);
+        else if (activeAgent) loadSessions("agent", activeAgent.id);
         document.getElementById("chatMessages").innerHTML = "";
       } catch (e) { log("Create session error: " + e.message, "log-err"); }
     }
@@ -918,14 +998,16 @@
       if (event) event.stopPropagation();
       if (!confirm("Are you sure you want to delete this session?")) return;
       try {
-        const r = await api("DELETE", `/rooms/${activeRoom.id}/sessions/${id}`);
+        const url = activeRoom ? `/rooms/${activeRoom.id}/sessions/${id}` : `/agents/${activeAgent.id}/sessions/${id}`;
+        const r = await api("DELETE", url);
         if (r.ok) {
           log("Session deleted ✓", "log-ok");
           if (activeSession && activeSession.id === id) {
             activeSession = null;
             document.getElementById("chatMessages").innerHTML = "";
           }
-          loadSessions(activeRoom.id);
+          if (activeRoom) loadSessions("room", activeRoom.id);
+          else if (activeAgent) loadSessions("agent", activeAgent.id);
         } else {
           log("Delete session failed: " + r.status, "log-err");
         }
@@ -1103,6 +1185,62 @@
 
     // Auto-connect on load
     window.addEventListener("load", () => setTimeout(checkHealth, 300));
+
+    /* ─── Files ─── */
+    async function loadRoomFiles(roomId) {
+      try {
+        const r = await api("GET", `/rooms/${roomId}/files`);
+        if (!r.ok) { log("Failed to load files", "log-err"); return; }
+        const files = await r.json();
+        const rf = document.getElementById("roomFiles");
+        if (files.length === 0) {
+          rf.style.display = "none";
+        } else {
+          rf.style.display = "flex";
+          rf.innerHTML = files.map(f => {
+            const statusColor = f.parse_status === 'completed' ? 'var(--green)' : (f.parse_status === 'failed' ? 'var(--red)' : 'var(--orange)');
+            return `<div style="background:var(--surface); padding:4px 8px; border-radius:4px; display:flex; align-items:center; gap:5px;" title="ID: ${f.id}\nStatus: ${f.parse_status}">
+              <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:${statusColor};"></span>
+              ${f.filename}
+            </div>`;
+          }).join("");
+        }
+      } catch (e) {
+        log("Load files error: " + e.message, "log-err");
+      }
+    }
+
+    async function uploadFile() {
+      if (!activeRoom) return;
+      const fileInput = document.getElementById("fileUploadInput");
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      const fd = new FormData();
+      fd.append("file", file);
+
+      try {
+        BASE = document.getElementById("apiUrl").value.replace(/\/+$/, "");
+        log(`Uploading ${file.name}...`);
+        const r = await fetch(BASE + `/rooms/${activeRoom.id}/files`, {
+          method: "POST",
+          headers: { "Authorization": AUTH },
+          body: fd
+        });
+        if (r.ok) {
+          log(`File ${file.name} uploaded ✓`, "log-ok");
+          loadRoomFiles(activeRoom.id);
+        } else {
+          const err = await r.json();
+          log("Upload failed: " + JSON.stringify(err), "log-err");
+        }
+      } catch (e) {
+        log("Upload error: " + e.message, "log-err");
+      } finally {
+        fileInput.value = ""; // reset
+      }
+    }
+
   </script>
 </body>
 
