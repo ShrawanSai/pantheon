@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from math import ceil, floor
-from typing import Literal, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Sequence
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 
 ContextRole = Literal["system", "user", "assistant"]
@@ -45,6 +50,118 @@ class ContextBudgetExceeded(Exception):
     model_context_limit: int
     input_budget: int
     estimated_tokens: int
+
+
+class MessageRow(Protocol):
+    """Structural protocol matching db.models.Message columns used by history building."""
+    id: str
+    turn_id: str | None
+    role: str
+    visibility: str
+    agent_key: str | None
+    source_agent_key: str | None
+    agent_name: str | None
+    content: str
+    created_at: datetime
+
+
+class ToolCallRow(Protocol):
+    """Structural protocol matching db.models.ToolCallEvent columns used by tool memory."""
+    tool_name: str
+    tool_input_json: str
+    tool_output_json: str
+    status: str
+    created_at: datetime
+
+
+_NAME_TAG_BRACKET = re.compile(r'^\[.*?\]:\s*')
+_NAME_TAG_PREFIX = re.compile(r'^[A-Za-z0-9_\s]{2,20}:\s*')
+
+
+def build_history_messages(
+    history_rows: Sequence[MessageRow],
+    *,
+    is_room: bool,
+    current_agent_key: str | None = None,
+    agent_private_turns_keep: int = 3,
+) -> list[HistoryMessage]:
+    """Build a unified HistoryMessage list from DB message rows.
+
+    When *current_agent_key* is supplied (multi-agent modes), private messages
+    belonging to that agent are merged into the timeline (limited to the most
+    recent *agent_private_turns_keep* pairs).  Otherwise only shared messages
+    are included.
+    """
+    if is_room and current_agent_key is not None:
+        shared = [r for r in history_rows if r.visibility == "shared"]
+        private = [
+            r for r in history_rows
+            if r.visibility == "private" and r.agent_key == current_agent_key
+        ]
+        private_limit = max(agent_private_turns_keep, 0) * 2
+        if private_limit > 0 and len(private) > private_limit:
+            private = private[-private_limit:]
+        combined: list[MessageRow] = sorted(
+            [*shared, *private], key=lambda r: (r.created_at, r.id)
+        )
+    elif is_room:
+        combined = sorted(history_rows, key=lambda r: (r.created_at, r.id))
+    else:
+        combined = [r for r in history_rows if r.visibility == "shared"]
+
+    output: list[HistoryMessage] = []
+    for msg in combined:
+        if msg.role not in {"user", "assistant", "tool"}:
+            continue
+        role: ContextRole = "user" if msg.role == "user" else "assistant"
+        content = msg.content
+
+        if msg.role == "assistant":
+            content = _NAME_TAG_BRACKET.sub("", content)
+            content = _NAME_TAG_PREFIX.sub("", content)
+
+        if (
+            is_room
+            and msg.role == "assistant"
+            and msg.visibility == "shared"
+            and current_agent_key is not None
+            and msg.source_agent_key is not None
+            and msg.source_agent_key != current_agent_key
+        ):
+            content = f"[{msg.agent_name or msg.source_agent_key}]: {content}"
+        elif is_room and msg.role == "assistant" and msg.visibility == "shared":
+            content = f"{msg.agent_name or msg.source_agent_key}: {content}"
+
+        output.append(HistoryMessage(id=msg.id, role=role, content=content, turn_id=msg.turn_id))
+    return output
+
+
+def build_tool_memory_block(
+    tool_events: Sequence[ToolCallRow],
+    max_events: int = 10,
+) -> str | None:
+    """Build a compact text block summarising an agent's recent tool calls.
+
+    Returns *None* when there are no events, so callers can skip the message.
+    """
+    if not tool_events:
+        return None
+
+    recent = list(tool_events)[-max_events:]
+    lines: list[str] = []
+    for evt in recent:
+        try:
+            args = json.loads(evt.tool_input_json)
+            args_short = ", ".join(f"{k}={v!r}" for k, v in args.items())
+        except (json.JSONDecodeError, AttributeError):
+            args_short = evt.tool_input_json[:80]
+
+        output_snippet = evt.tool_output_json[:200]
+        if len(evt.tool_output_json) > 200:
+            output_snippet += "..."
+        lines.append(f"- {evt.tool_name}({args_short}) → {output_snippet}")
+
+    return "You previously used these tools:\n" + "\n".join(lines)
 
 
 class ContextManager:

@@ -516,3 +516,387 @@ RAW LLM RESPONSE: {
     }
   ]
 }
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: Hello all, introduce yourself
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "stark",
+      "instruction": "Introduce yourself as Tony Stark, aka Ironman, and briefly mention your expertise and role in the tech world."
+    },
+    {
+      "agent_key": "modi",
+      "instruction": "Introduce yourself as Narendra Modi, the Prime Minister of India, and briefly mention your role and key responsibilities."
+    },
+    {
+      "agent_key": "elon",
+      "instruction": "Introduce yourself as Elon Musk, highlighting your involvement with companies like Grok AI, xAI, and SpaceX."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: get stark and modi to argue about blockchain based voting in elections. stark is pro and modi agains
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "stark", "instruction": "Present arguments in favor of blockchain-based voting, focusing on its potential benefits like security, transparency, and immutability. You should be prepared to counter arguments about complexity or scalability."}, {"agent_key": "modi", "instruction": "Present arguments against blockchain-based voting in national elections, focusing on potential drawbacks like accessibility for all citizens, technological literacy, cost of implementation, and the challenges of a decentralized system in a centralized election process. You should also consider potential security vulnerabilities or complexities in dispute resolution."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: veryone introduce yourself
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "stark", "instruction": "Introduce yourself as Tony Stark, aka Ironman, briefly describing your role and capabilities."}, {"agent_key": "modi", "instruction": "Introduce yourself as Narendra Modi, PM of India, briefly describing your role and responsibilities."}, {"agent_key": "elon", "instruction": "Introduce yourself as Elon Musk, briefly describing your ventures like Grok AI, xAI, and SpaceX."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: get stark and modi to argue about blockchain based voting in elections. stark is pro and modi agains
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "stark", "instruction": "You are pro blockchain based voting. Prepare an argument for why blockchain technology would improve the election process, focusing on security, transparency, and immutability. Anticipate potential counterarguments regarding scalability or energy consumption and be ready to defend your position. Also, utilize the search tool to find information supporting your argument about the benefits of blockchain in voting systems."}, {"agent_key": "modi", "instruction": "You are against blockchain based voting for elections. Prepare an argument outlining the potential downsides and risks of implementing blockchain for national elections in India. Focus on issues like accessibility for a diverse population, digital divide, potential for new forms of manipulation, regulatory challenges, and the sheer scale and complexity of such an implementation for a country like India. Utilize the search tool to find information supporting your argument about the challenges or risks of blockchain in voting systems."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: get stark and modi to argue about blockchain based voting in elections. stark is pro and modi agains
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: ```json
+{
+  "assignments": []
+}
+```
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['stark', 'modi', 'elon']
+USER INPUT: elon mustt decide the winner of the debate
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "elon",
+      "instruction": "Evaluate the arguments presented in the debate and determine the winner based on the strength of their points, evidence, and logical reasoning."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['a1', 'a2', 'a3']
+USER INPUT: Give 3-angle launch strategy
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "a1", "instruction": "Provide a high-level strategic framework for an innovative product launch, focusing on market positioning and target audience identification."}, {"agent_key": "a2", "instruction": "Research and present data-driven insights on successful product launch strategies in similar markets, identifying key trends and best practices."}, {"agent_key": "a3", "instruction": "Critique potential launch strategies, highlighting risks, weaknesses, and potential pitfalls, and suggest improvements to mitigate these issues."}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['m1', 'm2']
+USER INPUT: route and synthesize
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": []}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['m1', 'm2']
+USER INPUT: route and synthesize
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": []}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['a1', 'a2', 'a3']
+USER INPUT: Give 3-angle launch strategy
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "a1", "instruction": "Provide a high-level strategic overview of a product launch, focusing on market positioning and differentiation."}, {"agent_key": "a2", "instruction": "Research and outline a detailed operational plan for a product launch, including timelines, resources, and key activities."}, {"agent_key": "a3", "instruction": "Critique potential weaknesses and risks in a product launch strategy, offering mitigating solutions and alternative approaches."}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['m1', 'm2']
+USER INPUT: route and synthesize
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "m1", "instruction": "Provide a first perspective on routing."}, {"agent_key": "m2", "instruction": "Provide a second perspective on synthesizing"}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['m1', 'm2']
+USER INPUT: route
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "m1", "instruction": "Provide your perspective"}, {"agent_key": "m2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['anti1', 'anti2']
+USER INPUT: Write manager and both agent dialogues in one output
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "anti1", "instruction": "Provide your perspective"}, {"agent_key": "anti2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['orch0', 'orch1', 'orch2', 'orch3']
+USER INPUT: Need focused subset analysis
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "orch0", "instruction": "Provide your perspective"}, {"agent_key": "orch1", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['all0', 'all1', 'all2']
+USER INPUT: All agents critique this roadmap
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('all0', 'all1', 'all2')
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['ev1', 'ev2']
+USER INPUT: continue only if needed
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "ev1", "instruction": "Provide your perspective"}, {"agent_key": "ev2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['cap0', 'cap1', 'cap2', 'cap3']
+USER INPUT: all iterate
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('cap0', 'cap1', 'cap2', 'cap3')
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['syn1', 'syn2']
+USER INPUT: synthesize final
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "syn1", "instruction": "Provide your perspective"}, {"agent_key": "syn2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['a1', 'a2', 'a3']
+USER INPUT: Give me a 3-angle strategy on launch
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "a1", "instruction": "Respond briefly"}, {"agent_key": "a2", "instruction": "Respond briefly"}, {"agent_key": "a3", "instruction": "Respond briefly"}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['all0', 'all1', 'all2']
+USER INPUT: All agents critique this roadmap
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('all0', 'all1', 'all2')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['a1', 'a2', 'a3']
+USER INPUT: Give me a 3-angle strategy on launch
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "a1", "instruction": "Provide your perspective"}, {"agent_key": "a2", "instruction": "Provide your perspective"}, {"agent_key": "a3", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['m1', 'm2']
+USER INPUT: route
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "m1", "instruction": "Provide your perspective"}, {"agent_key": "m2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['anti1', 'anti2']
+USER INPUT: Write manager and both agent dialogues in one output
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "anti1", "instruction": "Provide your perspective"}, {"agent_key": "anti2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['orch0', 'orch1', 'orch2', 'orch3']
+USER INPUT: Need focused subset analysis
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "orch0", "instruction": "Provide your perspective"}, {"agent_key": "orch1", "instruction": "Provide your perspective"}, {"agent_key": "orch2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['all0', 'all1', 'all2']
+USER INPUT: All agents critique this roadmap
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('all0', 'all1', 'all2')
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['ev1', 'ev2']
+USER INPUT: continue only if needed
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "ev1", "instruction": "Provide your perspective"}, {"agent_key": "ev2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['cap0', 'cap1', 'cap2', 'cap3']
+USER INPUT: all iterate
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('cap0', 'cap1', 'cap2', 'cap3')
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['syn1', 'syn2']
+USER INPUT: synthesize final
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "syn1", "instruction": "Provide your perspective"}, {"agent_key": "syn2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['all0', 'all1', 'all2']
+USER INPUT: All agents critique this roadmap and give independent views
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('all0', 'all1', 'all2')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['all0_c23_a_explicit_all_agents', 'all1_c23_a_explicit_all_agents', 'all2_c23_a_explicit_all_agents']
+USER INPUT: All agents critique this roadmap and give independent views
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('all0_c23_a_explicit_all_agents', 'all1_c23_a_explicit_all_agents', 'all2_c23_a_explicit_all_agents')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['all0_c23_b_all_ceos_wording', 'all1_c23_b_all_ceos_wording', 'all2_c23_b_all_ceos_wording']
+USER INPUT: I want all CEOs to review this proposal and respond
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('all0_c23_b_all_ceos_wording', 'all1_c23_b_all_ceos_wording', 'all2_c23_b_all_ceos_wording')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['all0_c23_c_all_with_constraints', 'all1_c23_c_all_with_constraints', 'all2_c23_c_all_with_constraints']
+USER INPUT: All agents: each provide one risk and one mitigation only
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('all0_c23_c_all_with_constraints', 'all1_c23_c_all_with_constraints', 'all2_c23_c_all_with_constraints')
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['all0_c23_d_control_not_all', 'all1_c23_d_control_not_all', 'all2_c23_d_control_not_all']
+USER INPUT: Compare options quickly
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "all0_c23_d_control_not_all", "instruction": "Answer from your perspective"}, {"agent_key": "all1_c23_d_control_not_all", "instruction": "Answer from your perspective"}, {"agent_key": "all2_c23_d_control_not_all", "instruction": "Answer from your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['a1', 'a2', 'a3']
+USER INPUT: Give me a 3-angle strategy on launch
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "a1", "instruction": "Provide your perspective"}, {"agent_key": "a2", "instruction": "Provide your perspective"}, {"agent_key": "a3", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['m1', 'm2']
+USER INPUT: route
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "m1", "instruction": "Provide your perspective"}, {"agent_key": "m2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['anti1', 'anti2']
+USER INPUT: Write manager and both agent dialogues in one output
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "anti1", "instruction": "Provide your perspective"}, {"agent_key": "anti2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['orch0', 'orch1', 'orch2', 'orch3']
+USER INPUT: Need focused subset analysis
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "orch0", "instruction": "Provide your perspective"}, {"agent_key": "orch1", "instruction": "Provide your perspective"}, {"agent_key": "orch2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['all0', 'all1', 'all2']
+USER INPUT: All agents critique this roadmap
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('all0', 'all1', 'all2')
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['ev1', 'ev2']
+USER INPUT: continue only if needed
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "ev1", "instruction": "Provide your perspective"}, {"agent_key": "ev2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['cap0', 'cap1', 'cap2', 'cap3']
+USER INPUT: all iterate
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('cap0', 'cap1', 'cap2', 'cap3')
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['syn1', 'syn2']
+USER INPUT: synthesize final
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "syn1", "instruction": "Provide your perspective"}, {"agent_key": "syn2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['a1', 'a2', 'a3']
+USER INPUT: Give me a 3-angle strategy on launch
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "a1", "instruction": "Provide your perspective"}, {"agent_key": "a2", "instruction": "Provide your perspective"}, {"agent_key": "a3", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['m1', 'm2']
+USER INPUT: route
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "m1", "instruction": "Provide your perspective"}, {"agent_key": "m2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['anti1', 'anti2']
+USER INPUT: Write manager and both agent dialogues in one output
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "anti1", "instruction": "Provide your perspective"}, {"agent_key": "anti2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['orch0', 'orch1', 'orch2', 'orch3']
+USER INPUT: Need focused subset analysis
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "orch0", "instruction": "Provide your perspective"}, {"agent_key": "orch1", "instruction": "Provide your perspective"}, {"agent_key": "orch2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['all0', 'all1', 'all2']
+USER INPUT: All agents critique this roadmap
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('all0', 'all1', 'all2')
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['ev1', 'ev2']
+USER INPUT: continue only if needed
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "ev1", "instruction": "Provide your perspective"}, {"agent_key": "ev2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['cap0', 'cap1', 'cap2', 'cap3']
+USER INPUT: all iterate
+PRIOR OUTPUTS: NO
+DETERMINISTIC ROUTING TRIGGERED! Keys: ('cap0', 'cap1', 'cap2', 'cap3')
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['syn1', 'syn2']
+USER INPUT: synthesize final
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "syn1", "instruction": "Provide your perspective"}, {"agent_key": "syn2", "instruction": "Provide your perspective"}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['writer', 'researcher']
+USER INPUT: Need factual support.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: ```json
+{"selected_agent_keys":["researcher"]}
+```
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['writer', 'researcher']
+USER INPUT: Need factual support.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_key":"researcher"}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['writer', 'researcher']
+USER INPUT: Need factual support.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: not json at all
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['writer', 'researcher']
+USER INPUT: Need factual support.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys":["ghost"]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['writer', 'researcher']
+USER INPUT: Need factual support.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys":["researcher","writer"]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['writer', 'researcher']
+USER INPUT: Need factual support.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: ```json
+{"selected_agent_keys":["researcher"]}
+```
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['writer', 'researcher']
+USER INPUT: Need factual support.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_key":"researcher"}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['writer', 'researcher']
+USER INPUT: Need factual support.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: not json at all
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['writer', 'researcher']
+USER INPUT: Need factual support.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys":["ghost"]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['writer', 'researcher']
+USER INPUT: Need factual support.
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"selected_agent_keys":["researcher","writer"]}
