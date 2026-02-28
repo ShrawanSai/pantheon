@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
@@ -25,6 +26,7 @@ from apps.api.app.services.tools.mode_tools import (
     ToolInvocationTelemetry,
 )
 from apps.api.app.services.llm.structured_response import AgentResponse
+from apps.api.app.services.orchestration.context_manager import build_tool_memory_block
 from apps.api.app.services.orchestration.orchestrator_manager import (
     route_turn,
     generate_orchestrator_synthesis,
@@ -57,6 +59,9 @@ class TurnExecutionState:
     primary_context_messages: list[GatewayMessage]
     max_output_tokens: int
     room_id: str | None = None
+
+    # Per-agent recent ToolCallEvent rows, keyed by agent_key
+    agent_tool_events: dict[str, list[Any]] = field(default_factory=dict)
 
     current_round: int = 1
     total_invocations: int = 0
@@ -100,6 +105,135 @@ class PurePythonModeExecutor:
         self._llm_gateway = llm_gateway
         self._search_tool = search_tool or get_search_tool()
         self._file_read_tool = file_read_tool or get_file_read_tool()
+
+    def _assemble_agent_messages(
+        self,
+        state: TurnExecutionState,
+        agent: ActiveAgent,
+        *,
+        mode_instruction: str,
+        prior_agent_outputs: list[GatewayMessage] | None = None,
+    ) -> list[GatewayMessage]:
+        """Build the full message stack for an agent invocation.
+
+        Layer order:
+        1. Identity (agent name + role prompt)
+        2. Mode-specific behavioral contract
+        3. Room/session context + summary + history (from primary_context_messages)
+        4. Tool memory (prior tool calls for this agent)
+        5. Prior agent outputs (roundtable shared history / orchestrator specialist outputs)
+        """
+        messages: list[GatewayMessage] = []
+
+        # Layer 1: Identity
+        messages.append(GatewayMessage(
+            role="system",
+            content=f"You are {agent.name}. {agent.role_prompt}",
+        ))
+
+        # Layer 2: Behavioral contract (mode-specific rules)
+        messages.append(GatewayMessage(role="system", content=mode_instruction))
+
+        # Layer 3: Primary context (room/session context, summary, history, current turn)
+        messages.extend(state.primary_context_messages)
+
+        # Layer 4: Tool memory
+        tool_events = state.agent_tool_events.get(agent.agent_key or "", [])
+        tool_block = build_tool_memory_block(tool_events)
+        if tool_block:
+            messages.append(GatewayMessage(role="system", content=tool_block))
+
+        # Layer 5: Prior agent outputs (roundtable / orchestrator)
+        if prior_agent_outputs:
+            messages.extend(prior_agent_outputs)
+
+        return messages
+
+    def _build_single_speaker_stop_sequences(
+        self,
+        *,
+        current_speaker: str,
+        other_speakers: list[str],
+        include_manager: bool,
+        max_sequences: int = 4,
+    ) -> list[str]:
+        candidates: list[str] = []
+        if include_manager:
+            candidates.extend(["\nManager:", "Manager:"])
+
+        for name in other_speakers:
+            if name.lower() == current_speaker.lower():
+                continue
+            candidates.extend([f"\n{name}:", f"{name}:", f"\n{name.title()}:", f"{name.title()}:"])
+
+        seen: set[str] = set()
+        output: list[str] = []
+        for item in candidates:
+            if item in seen:
+                continue
+            seen.add(item)
+            output.append(item)
+            if len(output) >= max_sequences:
+                break
+        return output
+
+    def _sanitize_single_speaker_output(
+        self,
+        *,
+        text: str,
+        current_speaker: str,
+        disallowed_speakers: list[str],
+        include_manager: bool,
+    ) -> str:
+        if not text:
+            return text
+
+        own_prefix = re.compile(
+            rf"^\s*(?:\[{re.escape(current_speaker)}\]|{re.escape(current_speaker)})\s*:\s*",
+            flags=re.IGNORECASE,
+        )
+        manager_prefix = re.compile(r"^\s*(?:\[manager\]|manager)\s*:\s*", flags=re.IGNORECASE)
+
+        disallowed = {name.strip().lower() for name in disallowed_speakers if name and name.strip()}
+        disallowed.discard(current_speaker.strip().lower())
+
+        cleaned_lines: list[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                if cleaned_lines:
+                    cleaned_lines.append("")
+                continue
+            if line == "---" or line.lower().startswith("manager synthesis"):
+                break
+
+            line = own_prefix.sub("", line)
+            if include_manager:
+                line = manager_prefix.sub("", line)
+            lower_line = line.lower()
+
+            if include_manager and (
+                lower_line.startswith("manager:")
+                or lower_line.startswith("[manager]")
+                or lower_line.startswith("manager says:")
+            ):
+                if cleaned_lines:
+                    break
+                continue
+
+            if any(
+                lower_line.startswith(f"{name}:")
+                or lower_line.startswith(f"[{name}]")
+                or lower_line.startswith(f"{name} says:")
+                for name in disallowed
+            ):
+                if cleaned_lines:
+                    break
+                continue
+
+            cleaned_lines.append(line)
+
+        return "\n".join(cleaned_lines).strip()
 
     async def _invoke_agent(
         self, 
@@ -267,16 +401,16 @@ class PurePythonModeExecutor:
         return state
 
     async def _execute_manual(
-        self, 
-        db: AsyncSession, 
+        self,
+        db: AsyncSession,
         state: TurnExecutionState,
         event_sink: EventSink | None = None
     ):
         agent = state.active_agents[0]
-        base_messages = [
-            GatewayMessage(role="system", content=f"Agent role: {agent.role_prompt}"),
-            *state.primary_context_messages
-        ]
+        base_messages = self._assemble_agent_messages(
+            state, agent,
+            mode_instruction="Respond directly to the user's message.",
+        )
         text, success = await self._invoke_agent(state, agent, base_messages, db, event_sink)
         
         state.assistant_entries.append((agent, text))
@@ -306,47 +440,44 @@ class PurePythonModeExecutor:
         
         other_names_lower = [a.name.lower() for a in state.active_agents]
 
-        shared_history = []
+        shared_history: list[GatewayMessage] = []
         for agent in ordered_agents:
             other_names_str = ", ".join(n for n in other_names_lower if n != agent.name.lower())
             other_example = other_names_lower[0].title() if other_names_lower else "OtherAgent"
-            base_messages = [
-                GatewayMessage(role="system", content=f"Room mode: roundtable\nAgent role: {agent.role_prompt}\n\nCRITICAL: You are {agent.name}. Respond ONLY with your own direct speech. DO NOT include your own name, name tags (like '[{agent.name}]:' or '{agent.name}:'). Start immediately with your content. You are participating in a group conversation; acknowledge the user or previous agent statements if relevant.\n\nCRITICAL INSTRUCTION: When there is a tag to another agent beside you (e.g., @{other_example}), answer ONLY on your behalf. DO NOT write responses, dialogue, or script lines for any other agents ({other_names_str}). When you are finished with your own thought, STOP generating immediately.\n\nBAD EXAMPLE (Roleplaying others):\n[My thought about the topic.]\n\n{other_example}: [Their thought about the topic.]\n\nGOOD EXAMPLE (Answering only for myself):\n[My thought about the topic.]"),
-                *state.primary_context_messages,
-                *shared_history
-            ]
-            
-            stop_seqs = []
-            for n in other_names_lower:
-                if n != agent.name.lower():
-                    # Stop if the LLM tries to generate another agent's name followed by a colon
-                    stop_seqs.extend([f"\n{n.title()}:", f"{n.title()}:", f"\n{n.upper()}:", f"{n.upper()}:"])
+            mode_instruction = (
+                f"Room mode: roundtable\n"
+                f"You are participating in a group discussion. Respond ONLY as {agent.name}.\n"
+                f"DO NOT include name tags like '[{agent.name}]:' or '{agent.name}:' in your response.\n"
+                f"DO NOT write responses, dialogue, or script lines for any other agents ({other_names_str}).\n"
+                f"When another agent is @mentioned (e.g., @{other_example}), answer ONLY on your behalf, then STOP.\n\n"
+                f"BAD EXAMPLE (Roleplaying others):\n"
+                f"[My thought about the topic.]\n\n"
+                f"{other_example}: [Their thought about the topic.]\n\n"
+                f"GOOD EXAMPLE (Answering only for myself):\n"
+                f"[My thought about the topic.]"
+            )
+            base_messages = self._assemble_agent_messages(
+                state, agent,
+                mode_instruction=mode_instruction,
+                prior_agent_outputs=shared_history if shared_history else None,
+            )
+
+            stop_seqs = self._build_single_speaker_stop_sequences(
+                current_speaker=agent.name,
+                other_speakers=[a.name for a in state.active_agents],
+                include_manager=False,
+            )
             stop_seqs.append("\n---")
-            # OpenAI limit is usually 4 stop sequences.
-            # We will truncate to 4 sequences max to avoid api errors, prioritizing the common cases.
-            stop_seqs = list(set(stop_seqs))[:4]
-            
+
             text, success = await self._invoke_agent(state, agent, base_messages, db, event_sink, stop_sequences=stop_seqs)
-            
-            # Post-processing: truncate if LLM hallucinates another agent's turn
+
             if success and text:
-                import re
-                lines = text.split('\n')
-                cutoff_idx = len(lines)
-                for i, line in enumerate(lines):
-                    line_strip = line.strip()
-                    if line_strip == "---" or line_strip.startswith("--- "):
-                        cutoff_idx = i
-                        break
-                    # Match "OtherName:" or "OtherName :"
-                    lower_line = line_strip.lower()
-                    if any(lower_line.startswith(f"{n}:") or lower_line.startswith(f"[{n}]") or lower_line.startswith(f"{n} says:") for n in other_names_lower if n != agent.name.lower()):
-                        # Only cut if it looks like a prefix, not a sentence
-                        if len(line_strip) < 100: # heuristic
-                            cutoff_idx = i
-                            break
-                if cutoff_idx < len(lines):
-                    text = '\n'.join(lines[:cutoff_idx]).strip()
+                text = self._sanitize_single_speaker_output(
+                    text=text,
+                    current_speaker=agent.name,
+                    disallowed_speakers=[a.name for a in state.active_agents],
+                    include_manager=False,
+                )
 
             state.assistant_entries.append((agent, text))
             state.specialist_outputs.append((agent.name, text))
@@ -422,33 +553,63 @@ class PurePythonModeExecutor:
                 # Get the instruction for this specific agent from the routing result
                 instruction = routing.assignments.get(agent.agent_key, "Please provide your expertise on the user's request.")
 
-                base_messages = [
-                    GatewayMessage(
-                        role="system", 
-                        content=(
-                            f"CRITICAL INSTRUCTION: You are {agent.name}. {agent.role_prompt}\n\n"
-                            f"You are currently in a meeting being moderated by an Orchestrating Manager. "
-                            f"The Council consists of: {council_list}.\n\n"
-                            f"The Manager has specifically called upon YOU ({agent.name}) with these instructions:\n"
-                            f"'{instruction}'\n\n"
-                            f"RULES:\n"
-                            f"1. You MUST stay in character as {agent.name}.\n"
-                            f"2. You are NOT the Manager. Do not describe the process, do not moderate the room, do not summarize, and do not assign tasks.\n"
-                            f"3. Respond ONLY with your own direct speech, answering the instruction from your unique perspective.\n"
-                            f"4. DO NOT include your own name, name tags (like '[{agent.name}]:' or '{agent.name}:'), or narrative actions."
-                        )
-                    ),
-                    *state.primary_context_messages,
-                ]
+                mode_instruction = (
+                    f"You are in a meeting moderated by an Orchestrating Manager.\n"
+                    f"The Council consists of: {council_list}.\n\n"
+                    f"The Manager has specifically called upon YOU ({agent.name}) with these instructions:\n"
+                    f"'{instruction}'\n\n"
+                    f"RULES:\n"
+                    f"1. Stay in character as {agent.name}.\n"
+                    f"2. You are NOT the Manager. Do not moderate, summarize, or assign tasks.\n"
+                    f"3. Respond ONLY with your own direct speech from your unique perspective.\n"
+                    f"4. DO NOT include name tags like '[{agent.name}]:' or '{agent.name}:'."
+                )
 
-                # If this isn't the first turn, provide the prior outputs so the agent knows what has been discussed
+                prior_outputs: list[GatewayMessage] | None = None
                 if state.specialist_outputs:
                     specialist_block = "\n\n".join(f"[{name} just said]:\n{text}" for name, text in state.specialist_outputs)
-                    base_messages.append(
+                    prior_outputs = [
                         GatewayMessage(role="user", content=f"Previous specialist outputs in this room:\n{specialist_block}")
+                    ]
+
+                base_messages = self._assemble_agent_messages(
+                    state, agent,
+                    mode_instruction=mode_instruction,
+                    prior_agent_outputs=prior_outputs,
+                )
+
+                stop_seqs = self._build_single_speaker_stop_sequences(
+                    current_speaker=agent.name,
+                    other_speakers=[a.name for a in state.active_agents],
+                    include_manager=True,
+                )
+                stop_seqs.append("\n---")
+
+                text, success = await self._invoke_agent(
+                    state,
+                    agent,
+                    base_messages,
+                    db,
+                    event_sink,
+                    stop_sequences=stop_seqs,
+                )
+                if success and text:
+                    cleaned_text = self._sanitize_single_speaker_output(
+                        text=text,
+                        current_speaker=agent.name,
+                        disallowed_speakers=[a.name for a in state.active_agents],
+                        include_manager=True,
                     )
-                
-                text, success = await self._invoke_agent(state, agent, base_messages, db, event_sink)
+                    if cleaned_text != text:
+                        _LOGGER.warning(
+                            "Sanitized orchestrator output for agent=%s (possible multi-speaker contamination).",
+                            agent.name,
+                        )
+                    if not cleaned_text:
+                        success = False
+                        text = "[[agent_error]] type=SpeakerContamination message=agent_output_not_single_speaker"
+                    else:
+                        text = cleaned_text
                 round_outputs.append((agent, text))
                 if success:
                     state.specialist_outputs.append((agent.name, text))

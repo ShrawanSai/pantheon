@@ -53,6 +53,7 @@ from apps.api.app.services.orchestration.context_manager import (
     ContextManager,
     ContextMessage,
     HistoryMessage,
+    build_history_messages,
 )
 from apps.api.app.services.orchestration.mode_executor import (
     ActiveAgent,
@@ -589,42 +590,39 @@ async def create_turn(
     summary_used_fallback = False
     last_debit_balance: Decimal | None = None
 
-    history_messages: list[HistoryMessage] = []
-    if room is not None:
-        combined = sorted(history_rows, key=lambda item: (item.created_at, item.id))
-    else:
-        combined = [item for item in history_rows if item.visibility == "shared"]
-
-    for message in combined:
-        if message.role not in {"user", "assistant", "tool"}:
-            continue
-        role = "user" if message.role == "user" else "assistant"
-        content = message.content
-        if message.role == "assistant":
-            # Strip legacy hallucinated tags like [Sundar]: or Sundar: from the stored content
-            content = re.sub(r'^\[.*?\]:\s*', '', content)
-            # Only strip Name: if it looks like a prefix (not just the start of a sentence)
-            # We use a non-greedy match and check for a following space
-            content = re.sub(r'^[A-Za-z0-9_\s]{2,20}:\s*', '', content)
-
-        if room is not None and message.role == "assistant" and message.visibility == "shared":
-            content = f"{message.agent_name or message.source_agent_key}: {content}"
-        history_messages.append(
-            HistoryMessage(
-                id=message.id,
-                role=role,
-                content=content,
-                turn_id=message.turn_id,
-            )
-        )
+    history_messages = build_history_messages(
+        history_rows, is_room=room is not None,
+    )
 
     system_messages = []
     if room is not None:
         system_messages.append(ContextMessage(role="system", content=f"Room mode: {turn_mode}"))
         if room.goal:
             system_messages.append(ContextMessage(role="system", content=f"Room goal: {room.goal}"))
+
+        files_result = await db.scalars(
+            select(UploadedFile)
+            .where(UploadedFile.room_id == room.id)
+            .order_by(UploadedFile.created_at.desc())
+        )
+        files = files_result.all()
+        if files:
+            files_list = "\n".join(f"- {f.filename} (ID: {f.id})" for f in files)
+            file_msg = f"The user has uploaded the following files to this room:\n{files_list}\n\nTo read a file, use the 'file_read' tool with its ID."
+            system_messages.append(ContextMessage(role="system", content=file_msg))
     else:
         system_messages.append(ContextMessage(role="system", content="Session mode: standalone"))
+
+        files_result = await db.scalars(
+            select(UploadedFile)
+            .where(UploadedFile.session_id == session.id)
+            .order_by(UploadedFile.created_at.desc())
+        )
+        files = files_result.all()
+        if files:
+            files_list = "\n".join(f"- {f.filename} (ID: {f.id})" for f in files)
+            file_msg = f"The user has attached the following files to this session:\n{files_list}\n\nTo read a file, use the 'file_read' tool with its ID."
+            system_messages.append(ContextMessage(role="system", content=file_msg))
 
     try:
         primary_context = context_manager.prepare(
@@ -647,6 +645,21 @@ async def create_turn(
             },
         ) from exc
 
+    # Query recent tool events per agent for tool memory
+    agent_tool_events: dict[str, list[ToolCallEvent]] = {}
+    for sa in selected_agents:
+        if sa.agent_key:
+            events = (await db.scalars(
+                select(ToolCallEvent)
+                .where(
+                    ToolCallEvent.session_id == session.id,
+                    ToolCallEvent.agent_key == sa.agent_key,
+                )
+                .order_by(ToolCallEvent.created_at.desc())
+                .limit(10)
+            )).all()
+            agent_tool_events[sa.agent_key] = list(reversed(events))
+
     import typing
     state = TurnExecutionState(
         session_id=session.id,
@@ -657,6 +670,7 @@ async def create_turn(
         primary_context_messages=[GatewayMessage(role=m.role, content=m.content) for m in primary_context.messages],
         max_output_tokens=settings.context_max_output_tokens,
         room_id=session.room_id,
+        agent_tool_events=agent_tool_events,
     )
 
     state = await mode_executor.run_turn(db, state)
@@ -1072,87 +1086,20 @@ async def create_turn_stream(
     context_manager = _build_context_manager()
     share_same_turn_outputs = turn_mode == "roundtable"
 
-    def _build_history_messages_for_agent(current_agent_key: str | None) -> list[HistoryMessage]:
-        if room is not None:
-            shared = [item for item in history_rows if item.visibility == "shared"]
-            private = [
-                item
-                for item in history_rows
-                if item.visibility == "private" and item.agent_key == current_agent_key
-            ]
-            private_limit = max(settings.agent_private_context_turns_keep, 0) * 2
-            if private_limit > 0 and len(private) > private_limit:
-                private = private[-private_limit:]
-            combined = sorted(shared + private, key=lambda item: (item.created_at, item.id))
-        else:
-            combined = [item for item in history_rows if item.visibility == "shared"]
-
-        output: list[HistoryMessage] = []
-        for message in combined:
-            if message.role not in {"user", "assistant", "tool"}:
-                continue
-            role = "user" if message.role == "user" else "assistant"
-            content = message.content
-            if (
-                room is not None
-                and message.role == "assistant"
-                and message.visibility == "shared"
-                and current_agent_key is not None
-                and message.source_agent_key is not None
-                and message.source_agent_key != current_agent_key
-            ):
-                content = f"[{message.agent_name or message.source_agent_key}]: {message.content}"
-            output.append(
-                HistoryMessage(
-                    id=message.id,
-                    role=role,
-                    content=content,
-                    turn_id=message.turn_id,
-                )
-            )
-        return output
-
     async def _stream_turn() -> AsyncIterator[str]:
         summary_used_fallback = False
         last_debit_balance: Decimal | None = None
 
-        history_messages: list[HistoryMessage] = []
-        if room is not None:
-            combined = sorted(history_rows, key=lambda item: (item.created_at, item.id))
-        else:
-            combined = [item for item in history_rows if item.visibility == "shared"]
-
-        for message in combined:
-            if message.role not in {"user", "assistant", "tool"}:
-                continue
-            role = "user" if message.role == "user" else "assistant"
-            
-            # Sanitize assistant content by stripping legacy or hallucinated name tags
-            content = message.content
-            if message.role == "assistant":
-                # Strip bracketed tags or leading name prefixes
-                content = re.sub(r'^\[.*?\]:\s*', '', content)
-                content = re.sub(r'^[A-Za-z0-9_\s]{2,20}:\s*', '', content)
-
-            if room is not None and message.role == "assistant" and message.visibility == "shared":
-                # Re-apply a standard, clean prefix for context
-                content = f"{message.agent_name or message.source_agent_key}: {content}"
-                
-            history_messages.append(
-                HistoryMessage(
-                    id=message.id,
-                    role=role,
-                    content=content,
-                    turn_id=message.turn_id,
-                )
-            )
+        history_messages = build_history_messages(
+            history_rows, is_room=room is not None,
+        )
 
         system_messages = []
         if room is not None:
             system_messages.append(ContextMessage(role="system", content=f"Room mode: {turn_mode}"))
             if room.goal:
                 system_messages.append(ContextMessage(role="system", content=f"Room goal: {room.goal}"))
-            
+
             files_result = await db.scalars(
                 select(UploadedFile)
                 .where(UploadedFile.room_id == room.id)
@@ -1165,7 +1112,7 @@ async def create_turn_stream(
                 system_messages.append(ContextMessage(role="system", content=file_msg))
         else:
             system_messages.append(ContextMessage(role="system", content="Session mode: standalone"))
-            
+
             files_result = await db.scalars(
                 select(UploadedFile)
                 .where(UploadedFile.session_id == session.id)
@@ -1188,14 +1135,29 @@ async def create_turn_stream(
             )
         except ContextBudgetExceeded as exc:
             yield _sse_event({
-                "type": "error", 
+                "type": "error",
                 "message": "Input exceeds session context budget. Shorten input or start a new session."
             })
             return
 
+        # Query recent tool events per agent for tool memory
+        agent_tool_events: dict[str, list[ToolCallEvent]] = {}
+        for sa in selected_agents:
+            if sa.agent_key:
+                events = (await db.scalars(
+                    select(ToolCallEvent)
+                    .where(
+                        ToolCallEvent.session_id == session.id,
+                        ToolCallEvent.agent_key == sa.agent_key,
+                    )
+                    .order_by(ToolCallEvent.created_at.desc())
+                    .limit(10)
+                )).all()
+                agent_tool_events[sa.agent_key] = list(reversed(events))
+
         import typing
         import asyncio
-        
+
         state = TurnExecutionState(
             session_id=session.id,
             turn_index=next_turn_index + 1,
@@ -1205,6 +1167,7 @@ async def create_turn_stream(
             primary_context_messages=[GatewayMessage(role=m.role, content=m.content) for m in primary_context.messages],
             max_output_tokens=settings.context_max_output_tokens,
             room_id=session.room_id,
+            agent_tool_events=agent_tool_events,
         )
 
         queue: asyncio.Queue[str | None] = asyncio.Queue()
