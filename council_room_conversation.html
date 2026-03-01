@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Pantheon - The Council Room</title>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&amp;family=Manrope:wght@400;500;600;700&amp;family=Outfit:wght@300;400;500;600&amp;family=Playfair+Display:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Config -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#c3a550",
+                        "primary-dark": "#dcb960", 
+                        "background-light": "#F5F3EE",
+                        "background-dark": "#1e1b14",
+                        "surface-light": "#ffffff",
+                        "surface-dark": "#2a2720",
+                        "text-main-light": "#161512",
+                        "text-main-dark": "#f2f0ea",
+                        "text-muted-light": "#817b6a",
+                        "text-muted-dark": "#a8a290",
+                    },
+                    fontFamily: {
+                        "display": ["Manrope", "sans-serif"],
+                        "serif": ["Playfair Display", "serif"],
+                        "body": ["Outfit", "sans-serif"],
+                        "mono": ["JetBrains Mono", "monospace"],
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "2xl": "1rem",
+                        "full": "9999px"
+                    },
+                    boxShadow: {
+                        "soft": "0 4px 20px -2px rgba(0, 0, 0, 0.05)",
+                        "card": "0 2px 8px -1px rgba(0, 0, 0, 0.04)",
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        /* Custom scrollbar hide for cleaner UI */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark min-h-screen flex flex-col font-body transition-colors duration-200">
+<!-- Top App Bar -->
+<header class="sticky top-0 z-50 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-md border-b border-primary/10 dark:border-primary/5">
+<div class="flex items-center p-4 pb-2 justify-between">
+<button class="text-text-main-light dark:text-text-main-dark flex size-10 shrink-0 items-center justify-center rounded-full hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined text-2xl">arrow_back</span>
+</button>
+<h2 class="text-text-main-light dark:text-text-main-dark text-xl font-serif font-bold leading-tight tracking-tight flex-1 text-center">
+                The Room
+            </h2>
+<div class="flex items-center justify-end gap-1 px-3 py-1 rounded-full bg-surface-light dark:bg-surface-dark border border-primary/20 shadow-sm">
+<span class="material-symbols-outlined text-primary text-sm">token</span>
+<p class="text-primary font-mono text-xs font-medium leading-normal tracking-wide">1,240</p>
+</div>
+</div>
+<!-- Mode Selector -->
+<div class="flex gap-2 px-4 pb-3 overflow-x-auto no-scrollbar">
+<!-- Inactive: Manual -->
+<button class="flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-full border border-transparent bg-surface-light dark:bg-surface-dark px-4 shadow-card transition-all active:scale-95">
+<span class="material-symbols-outlined text-text-muted-light dark:text-text-muted-dark text-[18px]">touch_app</span>
+<p class="text-text-muted-light dark:text-text-muted-dark text-sm font-medium leading-normal whitespace-nowrap">Manual</p>
+</button>
+<!-- Active: Round Table -->
+<button class="flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-full bg-primary px-4 shadow-soft transition-all active:scale-95">
+<span class="material-symbols-outlined text-white dark:text-background-dark text-[18px]">groups</span>
+<p class="text-white dark:text-background-dark text-sm font-medium leading-normal whitespace-nowrap">Round Table</p>
+</button>
+<!-- Inactive: Auto-Pilot -->
+<button class="flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-full border border-transparent bg-surface-light dark:bg-surface-dark px-4 shadow-card transition-all active:scale-95">
+<span class="material-symbols-outlined text-text-muted-light dark:text-text-muted-dark text-[18px]">smart_toy</span>
+<p class="text-text-muted-light dark:text-text-muted-dark text-sm font-medium leading-normal whitespace-nowrap">Auto-Pilot</p>
+</button>
+</div>
+</header>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col gap-6 p-4 overflow-y-auto pb-32">
+<!-- Date Divider -->
+<div class="flex justify-center my-2">
+<span class="px-3 py-1 rounded-full bg-surface-light/50 dark:bg-surface-dark/50 text-xs font-mono text-text-muted-light dark:text-text-muted-dark border border-primary/5">Today, 10:23 AM</span>
+</div>
+<!-- User Message -->
+<div class="flex items-end gap-3 justify-end group">
+<div class="flex flex-1 flex-col gap-1 items-end max-w-[85%]">
+<div class="flex items-baseline gap-2 mb-1 opacity-0 group-hover:opacity-100 transition-opacity">
+<span class="text-text-muted-light dark:text-text-muted-dark text-xs font-medium">You</span>
+</div>
+<div class="rounded-2xl rounded-tr-sm px-5 py-4 bg-primary text-white dark:text-background-dark shadow-soft">
+<p class="text-[15px] font-normal leading-relaxed">
+                        Analyze the socio-economic impact of the new trade policy proposed in the document attached. Focus on short-term volatility versus long-term manufacturing growth.
+                    </p>
+</div>
+<!-- Attachment indicator -->
+<div class="flex items-center gap-2 mt-1 px-3 py-1.5 rounded-lg bg-surface-light dark:bg-surface-dark border border-primary/10 w-fit">
+<span class="material-symbols-outlined text-primary text-sm">description</span>
+<span class="text-text-main-light dark:text-text-main-dark text-xs font-mono">trade_policy_v2.pdf</span>
+</div>
+</div>
+<div class="h-8 w-8 rounded-full bg-cover bg-center border-2 border-surface-light dark:border-surface-dark shadow-sm shrink-0" data-alt="Portrait of a young man with a slight smile" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuBFolyZG6ICHF6UUKQdU7z6u9XB0eFVl8-HTbQVpwnDOr_nZXOjOq_R4hipW6ZeaLHMpKc72diB1CRaqPfHSPApm23_Ujo10CqkDcM-qMv7A1C14V7jtkyOPmtiqM_A9a77IsfH6LSuN60lz-a2B9GhRXQB-axO8NoPlsRvUDClSNQgbzpd8H3XJvwwfltFkMrWyprGe5siUQwxjqTfhDY2ykGcPpg-eF2YLtQwKMFVr7waEYbFTYkpT1ZG_NThMdcMQIEMtd7c84g');"></div>
+</div>
+<!-- Agent Response 1: Economist -->
+<div class="flex gap-3">
+<div class="flex flex-col items-center gap-2">
+<div class="h-10 w-10 rounded-full bg-cover bg-center border border-primary/20 shadow-sm shrink-0 relative" data-alt="Abstract geometric portrait representing logic" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDGSrX1wREVz3XpuQaQbOkZ59oshr7wYxBhgz-TpSkOwN-EcMWZqlv1iCUgpdeOdfQFH6EMTJqBZ1H8nji9Va1i7xASVh8SXM43FMucPjt6fJKYlRLecdLnZVzf3Cbqnnipbh5F5whvDhtBiZ18upHXGrOGgxovr1dFWK6ne6h-iSte3W0GieEzIkdx0dWMjoGJuw21OVPAlRZOGQlfsMhkRkZFcNIGXu18F-Gks0Kj2-M73K2gWKvd0JPnxLsB9If2XCKJgJUC0cg');">
+<div class="absolute -bottom-1 -right-1 bg-primary text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full border border-background-light dark:border-background-dark">
+<span class="material-symbols-outlined text-[10px]">analytics</span>
+</div>
+</div>
+<div class="w-px h-full bg-primary/10 dark:bg-primary/20 rounded-full my-1"></div>
+</div>
+<div class="flex flex-1 flex-col items-start max-w-[90%]">
+<div class="flex items-center gap-2 mb-1.5">
+<span class="text-text-main-light dark:text-text-main-dark text-sm font-bold font-display">Economist Prime</span>
+<span class="px-1.5 py-0.5 rounded bg-surface-light dark:bg-surface-dark border border-primary/20 text-[10px] font-mono text-primary uppercase tracking-wider">GPT-4</span>
+</div>
+<div class="bg-surface-light dark:bg-surface-dark rounded-2xl rounded-tl-sm p-5 border border-primary/5 shadow-card w-full">
+<div class="flex items-center gap-2 mb-3 pb-2 border-b border-dashed border-primary/10">
+<span class="material-symbols-outlined text-primary text-lg">trending_up</span>
+<span class="text-xs font-mono text-text-muted-light dark:text-text-muted-dark uppercase tracking-widest">Projection Analysis</span>
+</div>
+<p class="text-text-main-light dark:text-text-main-dark text-[15px] leading-relaxed mb-4">
+                        Based on the initial review, the <span class="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-1 rounded">short-term volatility</span> will likely increase by approximately 4.2% in Q1. Markets dislike uncertainty, and tariff adjustments inherently create friction.
+                    </p>
+<p class="text-text-main-light dark:text-text-main-dark text-[15px] leading-relaxed">
+                        However, the long-term outlook is fundamentally bullish. I project a <strong class="text-primary font-semibold">15% growth</strong> in the manufacturing sector over 24 months due to reduced import tariffs on raw materials. This creates a classic J-curve economic response.
+                    </p>
+<div class="mt-4 flex gap-2">
+<button class="px-3 py-1.5 rounded-lg bg-background-light dark:bg-background-dark border border-primary/10 text-xs text-text-muted-light dark:text-text-muted-dark hover:text-primary transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">thumb_up</span>
+                            Valid
+                        </button>
+<button class="px-3 py-1.5 rounded-lg bg-background-light dark:bg-background-dark border border-primary/10 text-xs text-text-muted-light dark:text-text-muted-dark hover:text-primary transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">reply</span>
+                            Reply
+                        </button>
+</div>
+</div>
+</div>
+</div>
+<!-- Agent Response 2: Historian -->
+<div class="flex gap-3">
+<div class="flex flex-col items-center gap-2">
+<div class="h-10 w-10 rounded-full bg-cover bg-center border border-primary/20 shadow-sm shrink-0 relative" data-alt="Classic portrait texture reminiscent of old paintings" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAkOhm0yCIcf71g7Zgv8Ci1Iy37l04ysFfyLAY7pfA_K2q9BUY4dIHrms-lJVSxEbbhxHlswhb6Cduk_oDsPtfynewM2aR-TTsgp359e42e_ttZ1cxEsNOJlef8XaVZjXOPgv0AaJ8jQBlvCukReHSq4Fnm0o35kuC4zAcIm3F2jw_7DZ1A_HYgOqK3bPUpOwibDtKlqy37jE26KXlVzWBuQFW0ZAcoylXWqyNwnHKIWCyQ7p5MzAeAjPwme9hoOlvAEXRkqf1Ow9w');">
+<div class="absolute -bottom-1 -right-1 bg-primary/80 text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full border border-background-light dark:border-background-dark">
+<span class="material-symbols-outlined text-[10px]">history_edu</span>
+</div>
+</div>
+</div>
+<div class="flex flex-1 flex-col items-start max-w-[90%]">
+<div class="flex items-center gap-2 mb-1.5">
+<span class="text-text-main-light dark:text-text-main-dark text-sm font-bold font-display">Historian Sage</span>
+<span class="px-1.5 py-0.5 rounded bg-surface-light dark:bg-surface-dark border border-primary/20 text-[10px] font-mono text-primary uppercase tracking-wider">Claude-3</span>
+</div>
+<div class="bg-surface-light dark:bg-surface-dark rounded-2xl rounded-tl-sm p-5 border border-primary/5 shadow-card w-full">
+<div class="flex items-center gap-2 mb-3 pb-2 border-b border-dashed border-primary/10">
+<span class="material-symbols-outlined text-primary text-lg">menu_book</span>
+<span class="text-xs font-mono text-text-muted-light dark:text-text-muted-dark uppercase tracking-widest">Historical Context</span>
+</div>
+<p class="text-text-main-light dark:text-text-main-dark text-[15px] leading-relaxed">
+                        This mirrors the <em class="font-serif text-primary">Trade Act of 1954</em> in several key aspects. Historically, such shifts favor domestic production but can strain diplomatic relations with export-heavy partners. 
+                    </p>
+<div class="mt-3 p-3 bg-background-light dark:bg-background-dark rounded-lg border-l-2 border-primary">
+<p class="text-xs italic text-text-muted-light dark:text-text-muted-dark">
+                            "Protectionism often wears the cloak of patriotism, but its dagger is forged in isolation." — Historical Archive Reference #442
+                        </p>
+</div>
+<div class="mt-4 flex gap-2">
+<button class="px-3 py-1.5 rounded-lg bg-background-light dark:bg-background-dark border border-primary/10 text-xs text-text-muted-light dark:text-text-muted-dark hover:text-primary transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">thumb_up</span>
+                            Insightful
+                        </button>
+<button class="px-3 py-1.5 rounded-lg bg-background-light dark:bg-background-dark border border-primary/10 text-xs text-text-muted-light dark:text-text-muted-dark hover:text-primary transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">reply</span>
+                            Reply
+                        </button>
+</div>
+</div>
+</div>
+</div>
+<!-- Thinking Indicator -->
+<div class="flex gap-3 items-center ml-14 opacity-60">
+<div class="flex gap-1">
+<div class="w-1.5 h-1.5 rounded-full bg-primary animate-bounce"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary animate-bounce delay-75"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary animate-bounce delay-150"></div>
+</div>
+<span class="text-xs font-mono text-text-muted-light dark:text-text-muted-dark">Synthesizer is drafting consensus...</span>
+</div>
+</main>
+<!-- Bottom Input Area -->
+<footer class="fixed bottom-0 left-0 w-full bg-surface-light dark:bg-surface-dark border-t border-primary/10 px-4 py-4 backdrop-blur-xl bg-opacity-95 dark:bg-opacity-95 z-40 pb-safe">
+<div class="flex flex-col gap-3 max-w-4xl mx-auto">
+<!-- Input Container -->
+<div class="flex gap-2 items-end bg-background-light dark:bg-background-dark rounded-2xl p-2 border border-primary/10 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all shadow-sm">
+<button class="p-2 text-text-muted-light dark:text-text-muted-dark hover:text-primary transition-colors rounded-full hover:bg-surface-light dark:hover:bg-surface-dark shrink-0">
+<span class="material-symbols-outlined text-[22px]">add_circle</span>
+</button>
+<textarea class="w-full bg-transparent border-none text-text-main-light dark:text-text-main-dark placeholder-text-muted-light dark:placeholder-text-muted-dark focus:ring-0 text-[16px] max-h-32 resize-none py-2.5 font-body" placeholder="Direct the council..." rows="1" style="min-height: 44px;"></textarea>
+<button class="p-2 text-text-muted-light dark:text-text-muted-dark hover:text-primary transition-colors rounded-full hover:bg-surface-light dark:hover:bg-surface-dark shrink-0">
+<span class="material-symbols-outlined text-[22px]">mic</span>
+</button>
+<button class="p-2 bg-primary hover:bg-primary-dark text-white dark:text-background-dark rounded-xl shadow-sm transition-all active:scale-95 shrink-0 mb-0.5">
+<span class="material-symbols-outlined text-[20px]">arrow_upward</span>
+</button>
+</div>
+</div>
+<!-- Safe area spacing for iOS home indicator -->
+<div class="h-4 w-full"></div>
+</footer>
+</body></html>

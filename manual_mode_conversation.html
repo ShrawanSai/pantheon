@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Pantheon - Manual Mode Conversation</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&amp;family=Playfair+Display:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#c9a74a",
+                        "background-light": "#f8f7f6",
+                        "background-dark": "#1f1c13",
+                        "surface-light": "#ffffff",
+                        "surface-dark": "#2a271d",
+                    },
+                    fontFamily: {
+                        "display": ["Public Sans", "sans-serif"],
+                        "serif": ["Playfair Display", "serif"],
+                    },
+                    borderRadius: { "DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        /* Custom scrollbar hiding for clean UI */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display min-h-screen flex flex-col overflow-hidden relative">
+<!-- Top App Bar -->
+<header class="flex-none bg-background-light dark:bg-background-dark pt-4 pb-2 px-4 shadow-sm z-10">
+<div class="flex items-center justify-between mb-4">
+<button class="flex size-10 items-center justify-center rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-slate-900 dark:text-slate-100 transition-colors">
+<span class="material-symbols-outlined">arrow_back</span>
+</button>
+<h1 class="text-xl font-serif font-bold text-slate-900 dark:text-slate-100">Council Room</h1>
+<button class="flex size-10 items-center justify-center rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-slate-900 dark:text-slate-100 transition-colors">
+<span class="material-symbols-outlined">more_vert</span>
+</button>
+</div>
+<!-- Mode Selector -->
+<div class="flex p-1 bg-surface-light dark:bg-surface-dark rounded-full shadow-inner border border-stone-200 dark:border-stone-800">
+<label class="flex-1 cursor-pointer">
+<input class="peer sr-only" name="mode" type="radio"/>
+<div class="h-9 flex items-center justify-center rounded-full text-sm font-medium text-stone-500 dark:text-stone-400 peer-checked:bg-white dark:peer-checked:bg-stone-700 peer-checked:text-slate-900 dark:peer-checked:text-slate-100 peer-checked:shadow-sm transition-all">
+                    Round Table
+                </div>
+</label>
+<label class="flex-1 cursor-pointer">
+<input checked="" class="peer sr-only" name="mode" type="radio"/>
+<div class="h-9 flex items-center justify-center rounded-full text-sm font-medium text-stone-500 dark:text-stone-400 peer-checked:bg-primary peer-checked:text-white peer-checked:shadow-md transition-all">
+                    Manual
+                </div>
+</label>
+<label class="flex-1 cursor-pointer">
+<input class="peer sr-only" name="mode" type="radio"/>
+<div class="h-9 flex items-center justify-center rounded-full text-sm font-medium text-stone-500 dark:text-stone-400 peer-checked:bg-white dark:peer-checked:bg-stone-700 peer-checked:text-slate-900 dark:peer-checked:text-slate-100 peer-checked:shadow-sm transition-all">
+                    Archive
+                </div>
+</label>
+</div>
+</header>
+<!-- Chat Area -->
+<main class="flex-1 overflow-y-auto p-4 space-y-6 no-scrollbar pb-40">
+<!-- Timestamp -->
+<div class="flex justify-center">
+<span class="text-xs font-medium text-stone-400 dark:text-stone-500 uppercase tracking-wider">Today, 10:23 AM</span>
+</div>
+<!-- Agent Message (The Strategist) -->
+<div class="flex items-end gap-3 group">
+<div class="relative shrink-0">
+<div class="w-10 h-10 rounded-full bg-stone-200 dark:bg-stone-700 overflow-hidden border-2 border-white dark:border-stone-800 shadow-sm" data-alt="Avatar of The Strategist" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuD29STtVlhBIsxX9HEdFecMrRzgJ9_66bbjdve4pFP1tnVjuvZxQHPGIg5DlCAYNSCrCKZEn6Wxs09nhpnrast03rjD0mzpSkjIl_bVVveU1YlNtum89O8vZ9fhUrsvcFXEfUu4czyaPpCN-3McE-qHHHLh3YHD0nkQQgLcrGKsqXUyI6jqvobWHvUsINDNL-93cPIm_fJjxK6p4jE0shMxXrBztrcA3SPvWeeAJcGRgbf5ztcoTndk3npWdZE2QP-90CDu8IvwZzU');"></div>
+<div class="absolute -bottom-1 -right-1 bg-stone-600 w-4 h-4 rounded-full border-2 border-background-light dark:border-background-dark flex items-center justify-center">
+<span class="text-[8px] text-white font-bold">S</span>
+</div>
+</div>
+<div class="flex flex-col gap-1 max-w-[80%]">
+<span class="text-xs text-stone-500 dark:text-stone-400 ml-1 font-medium">The Strategist</span>
+<div class="bg-surface-light dark:bg-surface-dark rounded-2xl rounded-tl-sm p-4 text-slate-800 dark:text-slate-200 shadow-sm border border-stone-100 dark:border-stone-800 leading-relaxed">
+                    Based on the initial market data, a direct approach seems risky. The competitors are entrenched. I advise caution and a flanking maneuver.
+                </div>
+</div>
+</div>
+<!-- Agent Message (The Creative) -->
+<div class="flex items-end gap-3 group">
+<div class="relative shrink-0">
+<div class="w-10 h-10 rounded-full bg-stone-200 dark:bg-stone-700 overflow-hidden border-2 border-white dark:border-stone-800 shadow-sm" data-alt="Avatar of The Creative" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuBTYOQb7_-j4hbjN_6ZZaFrdZ1VFDMm_Xdfm7mOqUcYXYj941QHM2vPHYSjRyX4rPGk9wAesathiBisolWGFYtlDp6RIpgrXq6ok0hDpCrKbzPjeHd_c4XMNSMDBg2CYf_QGltD5mwgARmg405muJnDf1f8oY6wU7MQ8qgkJ--P8-sGeJCqRr8tx2lbeCwo_0iXq3twovm2HAuyKj-RSI3CdAU7N8pFQFyrYC07rzxdF1f-qUKQc_kU5x3hP3HAR-PsxkVdKq9Q2BM');"></div>
+<div class="absolute -bottom-1 -right-1 bg-primary w-4 h-4 rounded-full border-2 border-background-light dark:border-background-dark flex items-center justify-center">
+<span class="text-[8px] text-white font-bold">C</span>
+</div>
+</div>
+<div class="flex flex-col gap-1 max-w-[80%]">
+<span class="text-xs text-stone-500 dark:text-stone-400 ml-1 font-medium">The Creative</span>
+<div class="bg-surface-light dark:bg-surface-dark rounded-2xl rounded-tl-sm p-4 text-slate-800 dark:text-slate-200 shadow-sm border border-stone-100 dark:border-stone-800 leading-relaxed">
+                    Risk is just opportunity in disguise, my friend. If we play it safe, we're invisible. Let's draft something bold that demands attention.
+                </div>
+</div>
+</div>
+<!-- User Message -->
+<div class="flex items-end gap-3 justify-end group">
+<div class="flex flex-col gap-1 items-end max-w-[80%]">
+<div class="bg-primary/10 dark:bg-primary/20 rounded-2xl rounded-tr-sm p-4 text-slate-900 dark:text-slate-100 leading-relaxed border border-primary/20">
+<span class="text-primary font-bold text-sm mb-1 block">@TheCreative</span>
+                    I like the energy. Give me three variations of that bold concept, but keep the Strategist's budget constraints in mind.
+                </div>
+<span class="text-xs text-stone-400 dark:text-stone-500 mr-1">Read 10:28 AM</span>
+</div>
+</div>
+<!-- Agent Message (The Creative - Reply) -->
+<div class="flex items-end gap-3 group">
+<div class="relative shrink-0">
+<div class="w-10 h-10 rounded-full bg-stone-200 dark:bg-stone-700 overflow-hidden border-2 border-white dark:border-stone-800 shadow-sm" data-alt="Avatar of The Creative" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDuJR8421DjqKqLzVLb0Gj-rP-YiaIVzjRp-PJI7WT33ekz_gxqqUHJ_GmpFrF7vK1PAfVDq5oF3-6wdiJRVJqPrYIr9xqQGOKUpU_VTNoGXa3EvJrdf_U1N3xdmNL7XtBl6yYyRFyt2SgthGfu1baNMV19dxsaWvymGMZERZjLSA4qAm58vKi8niVT3DaFBVPtFqgcUN5FfMcwGXKaM3CCYF0IRLeQ1PNssIYy_kX46TRh1XJ-jIeROe1K38yxUTpYtz0wwn39xbw');"></div>
+<div class="absolute -bottom-1 -right-1 bg-primary w-4 h-4 rounded-full border-2 border-background-light dark:border-background-dark flex items-center justify-center">
+<span class="text-[8px] text-white font-bold">C</span>
+</div>
+</div>
+<div class="flex flex-col gap-1 max-w-[85%]">
+<span class="text-xs text-stone-500 dark:text-stone-400 ml-1 font-medium">The Creative</span>
+<div class="bg-surface-light dark:bg-surface-dark rounded-2xl rounded-tl-sm overflow-hidden shadow-sm border border-stone-100 dark:border-stone-800">
+<div class="bg-primary/10 px-4 py-2 border-b border-primary/10 flex items-center justify-between">
+<span class="text-xs font-bold text-primary tracking-wide uppercase">Concept Drafts</span>
+<span class="material-symbols-outlined text-primary text-base">lightbulb</span>
+</div>
+<div class="p-4 text-slate-800 dark:text-slate-200 leading-relaxed space-y-3">
+<p>Here are three directions:</p>
+<ol class="list-decimal list-inside space-y-2 text-sm">
+<li><strong class="text-slate-900 dark:text-white">The Trojan Horse:</strong> A viral content series that looks like entertainment but sells the product. Low ad spend.</li>
+<li><strong class="text-slate-900 dark:text-white">Guerrilla Projection:</strong> Night projections on competitor buildings. Zero media buy, high PR value.</li>
+<li><strong class="text-slate-900 dark:text-white">Influencer Heist:</strong> Partner with micro-creators to "leak" the product.</li>
+</ol>
+</div>
+</div>
+</div>
+</div>
+<div class="h-24"></div> <!-- Spacer for fixed bottom input -->
+</main>
+<!-- Bottom Interaction Area -->
+<div class="fixed bottom-0 w-full bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-md border-t border-stone-200 dark:border-stone-800 p-4 z-20">
+<!-- Addressing Row (Manual Mode Specific) -->
+<div class="flex items-center gap-3 mb-3 overflow-x-auto no-scrollbar pb-1">
+<span class="text-xs font-bold text-stone-400 dark:text-stone-500 uppercase tracking-widest shrink-0">Addressing:</span>
+<!-- Active Agent Chip 1 -->
+<button class="flex items-center gap-2 pl-1 pr-3 py-1 bg-primary text-white rounded-full shadow-md shadow-primary/20 shrink-0 transition-transform active:scale-95">
+<div class="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold border border-white/20">C</div>
+<span class="text-sm font-medium">The Creative</span>
+<span class="material-symbols-outlined text-[16px]">close</span>
+</button>
+<!-- Inactive Agent Chip -->
+<button class="flex items-center gap-2 pl-1 pr-3 py-1 bg-surface-light dark:bg-surface-dark border border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 rounded-full hover:bg-stone-100 dark:hover:bg-stone-800 shrink-0 transition-colors">
+<div class="w-6 h-6 rounded-full bg-stone-200 dark:bg-stone-700 flex items-center justify-center text-xs font-bold text-stone-500 dark:text-stone-400">S</div>
+<span class="text-sm font-medium">The Strategist</span>
+</button>
+<!-- Inactive Agent Chip -->
+<button class="flex items-center gap-2 pl-1 pr-3 py-1 bg-surface-light dark:bg-surface-dark border border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 rounded-full hover:bg-stone-100 dark:hover:bg-stone-800 shrink-0 transition-colors">
+<div class="w-6 h-6 rounded-full bg-stone-200 dark:bg-stone-700 flex items-center justify-center text-xs font-bold text-stone-500 dark:text-stone-400">A</div>
+<span class="text-sm font-medium">The Analyst</span>
+</button>
+</div>
+<!-- Input Field -->
+<div class="flex items-end gap-2 bg-surface-light dark:bg-surface-dark p-2 rounded-[1.5rem] border border-stone-200 dark:border-stone-700 shadow-sm focus-within:ring-2 focus-within:ring-primary/50 focus-within:border-primary transition-all">
+<button class="p-2 text-stone-400 dark:text-stone-500 hover:text-primary dark:hover:text-primary transition-colors rounded-full">
+<span class="material-symbols-outlined">add_circle</span>
+</button>
+<textarea class="w-full bg-transparent border-none text-slate-900 dark:text-slate-100 placeholder-stone-400 dark:placeholder-stone-500 focus:ring-0 p-2 max-h-32 min-h-[44px] resize-none text-base leading-relaxed" placeholder="Direct your command..." rows="1"></textarea>
+<button class="p-2 mr-1 bg-primary text-white rounded-full shadow-sm hover:shadow-md hover:bg-yellow-600 transition-all flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
+<span class="material-symbols-outlined">arrow_upward</span>
+</button>
+</div>
+<!-- Bottom Safe Area Spacer -->
+<div class="h-1 w-full"></div>
+</div>
+</body></html>
