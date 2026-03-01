@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
+import { MoreVertical, Paperclip, Send, ThumbsUp, CornerDownLeft, ArrowLeft } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { ManageRoomPanel } from "@/components/rooms/manage-room-panel";
 import { listAgents, type AgentRead } from "@/lib/api/agents";
 import { ApiError } from "@/lib/api/client";
 import {
@@ -28,7 +30,6 @@ import {
 import {
   listRoomFiles,
   uploadFile,
-  type UploadedFileRead
 } from "@/lib/api/files";
 
 type RoomWorkspacePageProps = {
@@ -37,525 +38,583 @@ type RoomWorkspacePageProps = {
   };
 };
 
-const MODE_OPTIONS: Array<{ value: RoomMode; label: string; description: string }> = [
-  {
-    value: "manual",
-    label: "Solo Chat",
-    description: "One primary agent responds each turn."
-  },
-  {
-    value: "roundtable",
-    label: "Team Discussion",
-    description: "Agents respond in sequence with multiple viewpoints."
-  },
-  {
-    value: "orchestrator",
-    label: "Auto Best Answer",
-    description: "A manager coordinates specialists and synthesizes one answer."
-  }
+const MODE_OPTIONS: Array<{ value: RoomMode; label: string; icon: string }> = [
+  { value: "manual", label: "Manual", icon: "touch_app" },
+  { value: "roundtable", label: "Round Table", icon: "groups" },
+  { value: "orchestrator", label: "Auto-Pilot", icon: "smart_toy" },
 ];
 
-function formatDateTime(iso: string): string {
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) {
-    return "-";
-  }
-  return parsed.toLocaleString();
+/** Returns initials (up to 2 chars) for an agent name */
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((w) => w[0] ?? "")
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
+
+/** Hue derived from agent name for a stable unique colour */
+function agentHue(name: string): number {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return Math.abs(hash) % 360;
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDateGroup(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return `Today, ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday`;
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
+  const router = useRouter();
   const roomId = params.roomId;
   const queryClient = useQueryClient();
 
-  const [modeDraft, setModeDraft] = useState<RoomMode>("manual");
-  const [assignAgentId, setAssignAgentId] = useState("");
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [messageInput, setMessageInput] = useState("");
   const [composerError, setComposerError] = useState("");
-  const [actionMessage, setActionMessage] = useState("");
-  const [streamingEnabled, setStreamingEnabled] = useState(false);
+  const [streamingEnabled] = useState(true);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamDraft, setStreamDraft] = useState("");
-  const [streamTrace, setStreamTrace] = useState<string[]>([]);
+  const [streamAgentName, setStreamAgentName] = useState("");
+  const [managePanelOpen, setManagePanelOpen] = useState(false);
+  // Manual mode – which agents are currently "addressed"
+  const [addressedAgentIds, setAddressedAgentIds] = useState<Set<string>>(new Set());
+  // Feedback state: set of message IDs the user has "approved"
+  const [approvedMessages, setApprovedMessages] = useState<Set<string>>(new Set());
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const roomQuery = useQuery({
-    queryKey: ["room", roomId],
-    queryFn: () => getRoom(roomId)
-  });
-
-  const roomAgentsQuery = useQuery({
-    queryKey: ["roomAgents", roomId],
-    queryFn: () => listRoomAgents(roomId)
-  });
-
-  const allAgentsQuery = useQuery({
-    queryKey: ["agents"],
-    queryFn: listAgents
-  });
-
-  const sessionsQuery = useQuery({
-    queryKey: ["roomSessions", roomId],
-    queryFn: () => listRoomSessions(roomId)
-  });
-
+  // ── Queries ─────────────────────────────────────────────────────────────
+  const roomQuery = useQuery({ queryKey: ["room", roomId], queryFn: () => getRoom(roomId) });
+  const roomAgentsQuery = useQuery({ queryKey: ["roomAgents", roomId], queryFn: () => listRoomAgents(roomId) });
+  const allAgentsQuery = useQuery({ queryKey: ["agents"], queryFn: listAgents });
+  const sessionsQuery = useQuery({ queryKey: ["roomSessions", roomId], queryFn: () => listRoomSessions(roomId) });
   const messagesQuery = useQuery({
     queryKey: ["sessionMessages", selectedSessionId],
     queryFn: () => listSessionMessages(selectedSessionId),
-    enabled: Boolean(selectedSessionId)
+    enabled: Boolean(selectedSessionId),
+    refetchInterval: isStreaming ? false : 4000,
   });
+  const filesQuery = useQuery({ queryKey: ["roomFiles", roomId], queryFn: () => listRoomFiles(roomId) });
 
-  const turnsQuery = useQuery({
-    queryKey: ["sessionTurns", selectedSessionId],
-    queryFn: () => listSessionTurns(selectedSessionId),
-    enabled: Boolean(selectedSessionId)
-  });
+  const currentMode = roomQuery.data?.current_mode ?? "manual";
 
-  const filesQuery = useQuery({
-    queryKey: ["roomFiles", roomId],
-    queryFn: () => listRoomFiles(roomId)
-  });
-
-  useEffect(() => {
-    if (roomQuery.data) {
-      setModeDraft(roomQuery.data.current_mode);
-    }
-  }, [roomQuery.data]);
-
+  // Auto-select session
   useEffect(() => {
     const sessions = sessionsQuery.data || [];
-    if (!selectedSessionId && sessions.length > 0) {
-      setSelectedSessionId(sessions[0].id);
-    } else if (selectedSessionId && sessions.every((session) => session.id !== selectedSessionId)) {
+    if (!selectedSessionId && sessions.length > 0) setSelectedSessionId(sessions[0].id);
+    else if (selectedSessionId && sessions.every((s) => s.id !== selectedSessionId)) {
       setSelectedSessionId(sessions[0]?.id || "");
     }
   }, [selectedSessionId, sessionsQuery.data]);
 
-  const assignedAgentIds = useMemo(
-    () => new Set((roomAgentsQuery.data || []).map((assignment) => assignment.agent_id)),
-    [roomAgentsQuery.data]
-  );
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messagesQuery.data, streamDraft, isStreaming]);
 
-  const assignableAgents = useMemo(() => {
-    const all = allAgentsQuery.data?.agents || [];
-    return all.filter((agent) => !assignedAgentIds.has(agent.id));
-  }, [allAgentsQuery.data, assignedAgentIds]);
+  // Build a lookup from agent_id → RoomAgentRead
+  const agentMap = useMemo(() => {
+    const agents = allAgentsQuery.data?.agents ?? [];
+    const map = new Map<string, AgentRead>();
+    agents.forEach((a) => map.set(a.id, a));
+    return map;
+  }, [allAgentsQuery.data]);
 
-  const saveModeMutation = useMutation({
-    mutationFn: async () => updateRoomMode(roomId, modeDraft),
-    onSuccess: async () => {
-      setActionMessage("Room mode updated.");
-      await queryClient.invalidateQueries({ queryKey: ["room", roomId] });
-      await queryClient.invalidateQueries({ queryKey: ["rooms"] });
-    },
-    onError: (error) => {
-      setActionMessage(error instanceof ApiError ? error.detail : "Failed to update room mode.");
-    }
+  const roomAgents = roomAgentsQuery.data ?? [];
+
+  // ── Mode mutation ────────────────────────────────────────────────────────
+  const setModeMutation = useMutation({
+    mutationFn: (mode: RoomMode) => updateRoomMode(roomId, mode),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["room", roomId] }),
   });
 
-  const assignMutation = useMutation({
-    mutationFn: async (agentId: string) => assignRoomAgent(roomId, { agent_id: agentId }),
-    onSuccess: async () => {
-      setAssignAgentId("");
-      setActionMessage("Agent assigned to room.");
-      await queryClient.invalidateQueries({ queryKey: ["roomAgents", roomId] });
-    },
-    onError: (error) => {
-      setActionMessage(error instanceof ApiError ? error.detail : "Failed to assign agent.");
-    }
-  });
-
-  const unassignMutation = useMutation({
-    mutationFn: async (agentId: string) => removeRoomAgent(roomId, agentId),
-    onSuccess: async () => {
-      setActionMessage("Agent removed from room.");
-      await queryClient.invalidateQueries({ queryKey: ["roomAgents", roomId] });
-    },
-    onError: (error) => {
-      setActionMessage(error instanceof ApiError ? error.detail : "Failed to remove agent.");
-    }
-  });
-
+  // ── Session creation ─────────────────────────────────────────────────────
   const createSessionMutation = useMutation({
-    mutationFn: async () => createRoomSession(roomId),
+    mutationFn: () => createRoomSession(roomId),
     onSuccess: async (session) => {
       setSelectedSessionId(session.id);
-      setActionMessage("Session created.");
-      await queryClient.invalidateQueries({ queryKey: ["roomSessions", roomId] });
-      await queryClient.invalidateQueries({ queryKey: ["sessionMessages", session.id] });
-      await queryClient.invalidateQueries({ queryKey: ["sessionTurns", session.id] });
-    },
-    onError: (error) => {
-      setActionMessage(error instanceof ApiError ? error.detail : "Failed to create session.");
-    }
-  });
-
-  const submitTurnMutation = useMutation({
-    mutationFn: async ({ sessionId, message }: { sessionId: string; message: string }) =>
-      submitTurn(sessionId, { message }),
-    onSuccess: async () => {
-      setMessageInput("");
-      setComposerError("");
-      setActionMessage("Turn sent.");
-      await queryClient.invalidateQueries({ queryKey: ["sessionMessages", selectedSessionId] });
-      await queryClient.invalidateQueries({ queryKey: ["sessionTurns", selectedSessionId] });
       await queryClient.invalidateQueries({ queryKey: ["roomSessions", roomId] });
     },
-    onError: (error) => {
-      setComposerError(error instanceof ApiError ? error.detail : "Failed to send turn.");
-    }
   });
 
+  // ── File upload ──────────────────────────────────────────────────────────
   const uploadFileMutation = useMutation({
-    mutationFn: async (file: File) => uploadFile(roomId, file),
-    onSuccess: async () => {
-      setActionMessage("File uploaded successfully.");
-      await queryClient.invalidateQueries({ queryKey: ["roomFiles", roomId] });
-    },
-    onError: (error) => {
-      setActionMessage(error instanceof ApiError ? error.detail : "Failed to upload file.");
-    }
+    mutationFn: (file: File) => uploadFile(roomId, file),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["roomFiles", roomId] }),
   });
 
+  // ── Send turn ────────────────────────────────────────────────────────────
   async function handleSendTurn() {
     setComposerError("");
-    setActionMessage("");
     const trimmed = messageInput.trim();
-    if (!selectedSessionId) {
-      setComposerError("Create or select a session first.");
-      return;
-    }
-    if (!trimmed) {
-      setComposerError("Message is required.");
-      return;
+    if (!selectedSessionId) { setComposerError("Create a session first."); return; }
+    if (!trimmed) return;
+
+    // Build final message: prepend @mentions for manual mode addressed agents
+    let finalMessage = trimmed;
+    if (currentMode === "manual" && addressedAgentIds.size > 0) {
+      const mentions = [...addressedAgentIds]
+        .map((id) => agentMap.get(id)?.name ?? "")
+        .filter(Boolean)
+        .map((n) => `@${n}`)
+        .join(" ");
+      finalMessage = `${mentions} ${trimmed}`;
     }
 
+    setMessageInput("");
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
+
     if (!streamingEnabled) {
-      await submitTurnMutation.mutateAsync({ sessionId: selectedSessionId, message: trimmed });
+      try {
+        await submitTurn(selectedSessionId, { message: finalMessage });
+        await queryClient.invalidateQueries({ queryKey: ["sessionMessages", selectedSessionId] });
+      } catch (err) {
+        setComposerError(err instanceof ApiError ? err.detail : "Failed to send.");
+        setMessageInput(finalMessage);
+      }
       return;
     }
 
     setIsStreaming(true);
     setStreamDraft("");
-    setStreamTrace(["Connecting stream..."]);
+    setStreamAgentName("Thinking...");
     try {
-      let sawChunk = false;
-      const streamResult = await submitTurnStream(selectedSessionId, { message: trimmed }, (event: StreamEvent) => {
+      await submitTurnStream(selectedSessionId, { message: finalMessage }, (event: StreamEvent) => {
         if (event.type === "chunk" && typeof event.delta === "string") {
-          sawChunk = true;
           setStreamDraft((prev) => prev + event.delta);
-          return;
-        }
-        if ((event.type === "round_start" || event.type === "round_end") && typeof event.round === "number") {
-          const label = event.type === "round_start" ? `Round ${event.round} started` : `Round ${event.round} finished`;
-          setStreamTrace((prev) => [...prev, label]);
         }
       });
-      setMessageInput("");
-      if (streamResult.doneEvent) {
-        const doneTurnId = streamResult.doneEvent.turn_id;
-        setStreamTrace((prev) => [...prev, `Done event received (turn ${doneTurnId.slice(0, 8)})`]);
-      } else {
-        setStreamTrace((prev) => [...prev, "Stream ended without explicit done event."]);
-      }
-      setActionMessage(
-        sawChunk
-          ? "Stream complete."
-          : "Stream completed but no incremental chunks were emitted by the backend response."
-      );
       await queryClient.invalidateQueries({ queryKey: ["sessionMessages", selectedSessionId] });
       await queryClient.invalidateQueries({ queryKey: ["sessionTurns", selectedSessionId] });
-    } catch (error) {
-      const detail = error instanceof ApiError ? error.detail : "Streaming failed.";
-      setStreamTrace((prev) => [...prev, `Stream failed: ${detail}`, "Falling back to standard send..."]);
+    } catch (err) {
+      const detail = err instanceof ApiError ? err.detail : "Stream failed.";
       try {
-        await submitTurn(selectedSessionId, { message: trimmed });
-        setMessageInput("");
-        setComposerError("");
-        setActionMessage(`Streaming unavailable (${detail}). Turn sent via standard mode.`);
+        await submitTurn(selectedSessionId, { message: finalMessage });
         await queryClient.invalidateQueries({ queryKey: ["sessionMessages", selectedSessionId] });
-        await queryClient.invalidateQueries({ queryKey: ["sessionTurns", selectedSessionId] });
-        await queryClient.invalidateQueries({ queryKey: ["roomSessions", roomId] });
       } catch {
         setComposerError(detail);
+        setMessageInput(finalMessage);
       }
     } finally {
       setIsStreaming(false);
+      setStreamDraft("");
+      setStreamAgentName("");
     }
   }
 
-  const selectedSession: SessionRead | undefined = (sessionsQuery.data || []).find((item) => item.id === selectedSessionId);
+  // ── Textarea auto-grow ───────────────────────────────────────────────────
+  function handleTextareaChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setMessageInput(e.target.value);
+    e.target.style.height = "auto";
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+  }
+
+  // ── Toggle addressed agent (manual mode) ─────────────────────────────────
+  function toggleAddressed(agentId: string) {
+    setAddressedAgentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentId)) next.delete(agentId);
+      else next.add(agentId);
+      return next;
+    });
+  }
+
+  const messages = messagesQuery.data?.messages ?? [];
+  const sessions = sessionsQuery.data ?? [];
 
   return (
-    <section className="grid gap-4">
-      <header className="rounded-xl border border-[--border] bg-[--bg-surface] p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold">{roomQuery.data?.name || "Room"}</h1>
-            <p className="mt-1 text-sm text-[--text-muted]">
-              {roomQuery.data?.goal || "Room workspace for sessions, agent assignment, and chat history."}
-            </p>
+    <div className="flex h-full flex-col bg-background-light dark:bg-background overflow-hidden">
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <header className="flex-none bg-white dark:bg-surface border-b border-border px-4 pt-4 pb-2 z-10">
+        {/* Top row */}
+        <div className="flex items-center justify-between mb-3">
+          <button
+            onClick={() => router.push("/rooms")}
+            className="flex h-9 w-9 items-center justify-center rounded-full text-muted hover:bg-elevated hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+
+          {/* Session switcher */}
+          <div className="flex items-center gap-1 max-w-[200px] overflow-x-auto">
+            {sessions.slice(0, 5).map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setSelectedSessionId(s.id)}
+                className={`shrink-0 h-7 px-3 rounded-full text-xs font-medium transition-colors ${s.id === selectedSessionId
+                  ? "bg-accent text-white"
+                  : "bg-elevated text-muted hover:text-foreground"
+                  }`}
+              >
+                #{s.id.slice(0, 4)}
+              </button>
+            ))}
+            <button
+              onClick={() => createSessionMutation.mutate()}
+              disabled={createSessionMutation.isPending}
+              className="shrink-0 h-7 px-3 rounded-full text-xs border border-dashed border-border text-muted hover:border-accent hover:text-accent transition-colors"
+            >
+              {createSessionMutation.isPending ? "…" : "+ New"}
+            </button>
           </div>
-          <Button type="button" onClick={() => createSessionMutation.mutate()} disabled={createSessionMutation.isPending}>
-            {createSessionMutation.isPending ? "Creating session..." : "New Session"}
-          </Button>
+
+          <div className="flex items-center gap-1">
+            <span className="text-xs font-medium text-muted">
+              {roomAgents.length} {roomAgents.length === 1 ? "agent" : "agents"}
+            </span>
+            <button
+              onClick={() => setManagePanelOpen(true)}
+              className="flex h-9 w-9 items-center justify-center rounded-full text-muted hover:bg-elevated hover:text-foreground transition-colors"
+            >
+              <MoreVertical className="w-5 h-5" />
+            </button>
+          </div>
         </div>
-        {actionMessage ? <p className="mt-3 text-sm text-[--text-muted]">{actionMessage}</p> : null}
+
+        {/* Room name */}
+        <h1 className="text-center text-lg font-bold text-foreground mb-3">
+          {roomQuery.data?.name ?? "Council Room"}
+        </h1>
+
+        {/* Mode selector */}
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {MODE_OPTIONS.map((opt) => {
+            const active = currentMode === opt.value;
+            return (
+              <button
+                key={opt.value}
+                onClick={() => setModeMutation.mutate(opt.value)}
+                disabled={setModeMutation.isPending}
+                className={`flex h-9 shrink-0 items-center gap-2 rounded-full px-4 text-sm font-medium transition-all active:scale-95 ${active
+                  ? "bg-accent text-white shadow-sm"
+                  : "bg-elevated text-muted hover:text-foreground border border-border"
+                  }`}
+              >
+                <span className="text-[16px]">
+                  {opt.value === "manual" ? "✋" : opt.value === "roundtable" ? "👥" : "🤖"}
+                </span>
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
       </header>
 
-      <div className="grid gap-4 xl:grid-cols-[380px_1fr]">
-        <div className="grid gap-4">
-          <article className="rounded-xl border border-[--border] bg-[--bg-surface] p-4">
-            <h2 className="text-lg font-semibold">Room Mode</h2>
-            <label className="mt-3 grid gap-1 text-sm">
-              <span className="text-[--text-muted]">Interaction style</span>
-              <select
-                className="h-10 rounded-md border border-[--border] bg-[--bg-base] px-3 text-[--text-primary]"
-                value={modeDraft}
-                onChange={(event) => setModeDraft(event.target.value as RoomMode)}
-              >
-                {MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <span className="text-xs text-[--text-muted]">
-                {MODE_OPTIONS.find((option) => option.value === modeDraft)?.description}
-              </span>
-            </label>
-            <div className="mt-3">
-              <Button type="button" onClick={() => saveModeMutation.mutate()} disabled={saveModeMutation.isPending}>
-                {saveModeMutation.isPending ? "Saving..." : "Save Mode"}
-              </Button>
-            </div>
-          </article>
+      {/* ── Message Feed ─────────────────────────────────────────────────── */}
+      <main className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* Date divider – show once at start */}
+        {messages.length > 0 && (
+          <div className="flex justify-center">
+            <span className="px-3 py-1 rounded-full bg-elevated text-xs text-muted border border-border">
+              {formatDateGroup(messages[0].created_at)}
+            </span>
+          </div>
+        )}
 
-          <article className="rounded-xl border border-[--border] bg-[--bg-surface] p-4">
-            <h2 className="text-lg font-semibold">Assigned Agents</h2>
-            <div className="mt-3 grid gap-2">
-              {(roomAgentsQuery.data || []).map((assignment: RoomAgentRead) => (
-                <div key={assignment.id} className="rounded-md border border-[--border] bg-[--bg-base] p-3 text-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <div className="font-medium">{assignment.agent.name}</div>
-                      <div className="text-xs text-[--text-muted]">
-                        {assignment.agent.model_alias} · #{assignment.position}
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => unassignMutation.mutate(assignment.agent_id)}
-                      disabled={unassignMutation.isPending}
-                    >
-                      Remove
-                    </Button>
+        {/* Empty state */}
+        {!selectedSessionId && (
+          <div className="flex h-40 items-center justify-center rounded-2xl border-2 border-dashed border-border text-center">
+            <div>
+              <p className="font-semibold text-foreground">No Active Session</p>
+              <p className="text-sm text-muted mt-1">Create a new session to begin.</p>
+            </div>
+          </div>
+        )}
+
+        {selectedSessionId && messages.length === 0 && !isStreaming && (
+          <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+            <div className="text-4xl">🏛️</div>
+            <p className="font-semibold text-foreground">The Council Awaits</p>
+            <p className="text-sm text-muted max-w-xs">
+              {currentMode === "manual"
+                ? "Select agents to address below, then send your message."
+                : currentMode === "roundtable"
+                  ? "All agents will weigh in on your query."
+                  : "The manager will orchestrate and synthesize responses for you."}
+            </p>
+          </div>
+        )}
+
+        {/* Messages */}
+        {messages.map((message) => {
+          const isUser = message.role === "user";
+
+          if (isUser) {
+            return (
+              <div key={message.id} className="flex items-end gap-3 justify-end group">
+                <div className="flex flex-col items-end gap-1 max-w-[85%]">
+                  {/* @mentions in the message are highlighted */}
+                  <div className="rounded-2xl rounded-tr-sm px-5 py-3.5 bg-accent text-white shadow-sm">
+                    <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
+                      {message.content.split(/(@\w[\w\s]*)/).map((part, i) =>
+                        part.startsWith("@") ? (
+                          <strong key={i} className="font-bold text-white/90 bg-white/10 rounded px-1">
+                            {part}
+                          </strong>
+                        ) : (
+                          <span key={i}>{part}</span>
+                        )
+                      )}
+                    </p>
+                  </div>
+                  <span className="text-[11px] text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                    {formatTime(message.created_at)}
+                  </span>
+                </div>
+                {/* User avatar */}
+                <div className="h-8 w-8 shrink-0 rounded-full bg-accent/20 flex items-center justify-center text-accent text-xs font-bold border-2 border-white dark:border-surface">
+                  U
+                </div>
+              </div>
+            );
+          }
+
+          // Agent message
+          const agentName = message.agent_name || "Agent";
+          const hue = agentHue(agentName);
+          const isApproved = approvedMessages.has(message.id);
+
+          return (
+            <div key={message.id} className="flex gap-3 group">
+              {/* Avatar column */}
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <div
+                  className="h-10 w-10 rounded-full flex items-center justify-center text-white text-xs font-bold border-2 border-white dark:border-surface shadow-sm relative"
+                  style={{ background: `hsl(${hue},55%,50%)` }}
+                >
+                  {initials(agentName)}
+                  <div
+                    className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border border-white dark:border-surface flex items-center justify-center"
+                    style={{ background: `hsl(${hue},65%,40%)` }}
+                  >
+                    <span className="text-[8px] text-white font-bold">{agentName[0]}</span>
                   </div>
                 </div>
-              ))}
-              {!roomAgentsQuery.isLoading && (roomAgentsQuery.data || []).length === 0 ? (
-                <p className="text-sm text-[--text-muted]">No agents assigned yet.</p>
-              ) : null}
-            </div>
-            <div className="mt-3 grid gap-2">
-              <select
-                className="h-10 rounded-md border border-[--border] bg-[--bg-base] px-3 text-[--text-primary]"
-                value={assignAgentId}
-                onChange={(event) => setAssignAgentId(event.target.value)}
-              >
-                <option value="">Select an agent to assign</option>
-                {assignableAgents.map((agent: AgentRead) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name} ({agent.model_alias})
-                  </option>
-                ))}
-              </select>
-              <Button
-                type="button"
-                onClick={() => {
-                  if (assignAgentId) {
-                    assignMutation.mutate(assignAgentId);
-                  }
-                }}
-                disabled={!assignAgentId || assignMutation.isPending}
-              >
-                {assignMutation.isPending ? "Assigning..." : "Assign Agent"}
-              </Button>
-            </div>
-          </article>
-
-          <article className="rounded-xl border border-[--border] bg-[--bg-surface] p-4">
-            <h2 className="text-lg font-semibold">Sessions</h2>
-            <div className="mt-3 grid gap-2">
-              {(sessionsQuery.data || []).map((session: SessionRead) => (
-                <button
-                  key={session.id}
-                  type="button"
-                  onClick={() => setSelectedSessionId(session.id)}
-                  className={[
-                    "rounded-md border px-3 py-2 text-left text-sm transition-colors",
-                    selectedSessionId === session.id
-                      ? "border-[--accent] bg-[--accent]/15"
-                      : "border-[--border] bg-[--bg-base] hover:bg-[--bg-elevated]"
-                  ].join(" ")}
-                >
-                  <div className="font-medium">Session {session.id.slice(0, 8)}</div>
-                  <div className="text-xs text-[--text-muted]">{formatDateTime(session.created_at)}</div>
-                </button>
-              ))}
-              {!sessionsQuery.isLoading && (sessionsQuery.data || []).length === 0 ? (
-                <p className="text-sm text-[--text-muted]">No sessions yet. Create one to start chatting.</p>
-              ) : null}
-            </div>
-          </article>
-        </div>
-
-        <article className="rounded-xl border border-[--border] bg-[--bg-surface] p-4">
-          <h2 className="text-lg font-semibold">Workspace</h2>
-          <p className="mt-1 text-sm text-[--text-muted]">
-            {selectedSession
-              ? `Session ${selectedSession.id.slice(0, 8)} · created ${formatDateTime(selectedSession.created_at)}`
-              : "Select a session to view history and send turns."}
-          </p>
-
-          <div className="mt-4 grid gap-4 xl:grid-cols-2">
-            <div className="rounded-md border border-[--border] bg-[--bg-base] p-3">
-              <h3 className="text-sm font-semibold">Messages</h3>
-              <div className="mt-2 max-h-72 space-y-2 overflow-y-auto pr-1">
-                {(messagesQuery.data?.messages || []).map((message) => (
-                  <div key={message.id} className="rounded border border-[--border] p-2 text-sm">
-                    <div className="text-xs text-[--text-muted]">
-                      {message.role}
-                      {message.agent_name ? ` · ${message.agent_name}` : ""} · {formatDateTime(message.created_at)}
-                    </div>
-                    <p className="mt-1 whitespace-pre-wrap">{message.content}</p>
-                  </div>
-                ))}
-                {selectedSessionId && !messagesQuery.isLoading && (messagesQuery.data?.messages || []).length === 0 ? (
-                  <p className="text-sm text-[--text-muted]">No messages yet.</p>
-                ) : null}
+                {/* Vertical stem line */}
+                <div className="w-px flex-1 bg-border rounded-full" style={{ minHeight: 12 }} />
               </div>
-            </div>
 
-            <div className="rounded-md border border-[--border] bg-[--bg-base] p-3">
-              <h3 className="text-sm font-semibold">Turns</h3>
-              <div className="mt-2 max-h-72 space-y-2 overflow-y-auto pr-1">
-                {(turnsQuery.data?.turns || []).map((turn) => (
-                  <div key={turn.id} className="rounded border border-[--border] p-2 text-sm">
-                    <div className="text-xs text-[--text-muted]">
-                      #{turn.turn_index} · {turn.mode} · {turn.status} · {formatDateTime(turn.created_at)}
-                    </div>
-                    <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-[--text-muted]">{turn.assistant_output}</p>
-                  </div>
-                ))}
-                {selectedSessionId && !turnsQuery.isLoading && (turnsQuery.data?.turns || []).length === 0 ? (
-                  <p className="text-sm text-[--text-muted]">No turns yet.</p>
-                ) : null}
-              </div>
-            </div>
-          </div>
+              {/* Bubble */}
+              <div className="flex flex-col items-start max-w-[88%] min-w-0 pb-2">
+                {/* Agent name */}
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-sm font-bold text-foreground">{agentName}</span>
+                </div>
 
-          <div className="mt-4 rounded-md border border-[--border] bg-[--bg-base] p-3">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold">Attached Files</h3>
-            </div>
-            {filesQuery.data && filesQuery.data.length > 0 ? (
-              <div className="flex flex-wrap gap-2 text-xs">
-                {filesQuery.data.map((file) => (
-                  <div key={file.id} className="flex items-center gap-1 rounded bg-[--bg-surface] px-2 py-1 border border-[--border]" title={`ID: ${file.id}\nStatus: ${file.parse_status}`}>
-                    <span
-                      className="inline-block h-2 w-2 rounded-full"
-                      style={{
-                        backgroundColor:
-                          file.parse_status === "completed"
-                            ? "var(--green)"
-                            : file.parse_status === "failed"
-                              ? "var(--red)"
-                              : "var(--orange)"
+                {/* Message content */}
+                <div className="bg-white dark:bg-surface rounded-2xl rounded-tl-sm p-4 border border-border shadow-sm w-full">
+                  <p className="text-[15px] leading-relaxed text-foreground whitespace-pre-wrap">{message.content}</p>
+
+                  {/* Feedback row */}
+                  <div className="mt-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() =>
+                        setApprovedMessages((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(message.id)) next.delete(message.id);
+                          else next.add(message.id);
+                          return next;
+                        })
+                      }
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${isApproved
+                        ? "bg-accent/10 border-accent text-accent"
+                        : "bg-elevated border-border text-muted hover:text-accent hover:border-accent"
+                        }`}
+                    >
+                      <ThumbsUp className="w-3.5 h-3.5" />
+                      {isApproved ? "Noted" : "Valid"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMessageInput(`@${agentName} `);
+                        textareaRef.current?.focus();
                       }}
-                    />
-                    {file.filename}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-elevated text-xs font-medium text-muted hover:text-accent hover:border-accent transition-colors"
+                    >
+                      <CornerDownLeft className="w-3.5 h-3.5" />
+                      Reply
+                    </button>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-[--text-muted]">No files uploaded for this room.</p>
-            )}
-          </div>
+                </div>
 
-          <div className="mt-4 grid gap-2">
-            <label className="text-sm text-[--text-muted]" htmlFor="turn-message">
-              Send a turn
-            </label>
-            <textarea
-              id="turn-message"
-              className="min-h-28 rounded-md border border-[--border] bg-[--bg-base] px-3 py-2 text-[--text-primary]"
-              value={messageInput}
-              onChange={(event) => setMessageInput(event.target.value)}
-              placeholder="Type your message..."
-              disabled={!selectedSessionId || isStreaming || submitTurnMutation.isPending}
-            />
-            <div className="flex items-center justify-between">
-              <label className="inline-flex items-center gap-2 text-sm text-[--text-muted]">
-                <input
-                  type="checkbox"
-                  checked={streamingEnabled}
-                  onChange={(event) => setStreamingEnabled(event.target.checked)}
-                  disabled={!selectedSessionId || isStreaming || submitTurnMutation.isPending}
-                />
-                Enable streaming
-              </label>
-              <div>
-                <input
-                  type="file"
-                  id="file-upload"
-                  className="hidden"
-                  accept=".txt,.md,.csv"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      uploadFileMutation.mutate(file);
+                <span className="text-[11px] text-muted mt-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {formatTime(message.created_at)}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Streaming indicator */}
+        {isStreaming && (
+          <div className="flex gap-3">
+            <div className="h-10 w-10 shrink-0 rounded-full bg-accent/20 flex items-center justify-center border-2 border-white dark:border-surface">
+              <span className="text-accent text-xs font-bold">AI</span>
+            </div>
+            <div className="flex flex-col items-start max-w-[88%]">
+              {streamAgentName && (
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-sm font-bold text-foreground">{streamAgentName}</span>
+                </div>
+              )}
+              <div className="bg-white dark:bg-surface rounded-2xl rounded-tl-sm p-4 border border-border shadow-sm w-full">
+                {streamDraft ? (
+                  <p className="text-[15px] leading-relaxed text-foreground whitespace-pre-wrap">{streamDraft}</p>
+                ) : (
+                  <div className="flex items-center gap-2 text-muted text-sm">
+                    <div className="flex gap-1">
+                      <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                    <span className="text-xs font-mono">
+                      {currentMode === "orchestrator" ? "Synthesizer drafting..." : "Responding..."}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {composerError && (
+          <div className="text-center text-sm text-error py-2">{composerError}</div>
+        )}
+
+        <div ref={bottomRef} />
+      </main>
+
+      {/* ── Input Area ──────────────────────────────────────────────────────── */}
+      <footer className="flex-none bg-white dark:bg-surface border-t border-border px-4 pt-3 pb-4">
+        {/* File chips */}
+        {filesQuery.data && filesQuery.data.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {filesQuery.data.map((f) => (
+              <span
+                key={f.id}
+                className="text-[11px] bg-elevated px-2 py-1 rounded-lg border border-border text-muted truncate max-w-[140px]"
+              >
+                📎 {f.filename}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Manual mode: Agent addressing chips */}
+        {currentMode === "manual" && roomAgents.length > 0 && (
+          <div className="flex items-center gap-2 mb-3 overflow-x-auto pb-1">
+            <span className="text-[11px] font-semibold text-muted uppercase tracking-widest shrink-0">To:</span>
+            {roomAgents.map((ra) => {
+              const agent = agentMap.get(ra.agent_id);
+              const name = agent?.name ?? ra.agent_id.slice(0, 8);
+              const hue = agentHue(name);
+              const active = addressedAgentIds.has(ra.agent_id);
+              return (
+                <button
+                  key={ra.agent_id}
+                  onClick={() => toggleAddressed(ra.agent_id)}
+                  className={`flex items-center gap-1.5 pl-1 pr-3 py-1 rounded-full text-sm font-medium shrink-0 transition-all active:scale-95 border ${active
+                    ? "text-white shadow-sm border-transparent"
+                    : "text-muted border-border bg-elevated hover:bg-elevated"
+                    }`}
+                  style={active ? { background: `hsl(${hue},55%,50%)`, borderColor: `hsl(${hue},55%,50%)` } : {}}
+                >
+                  <div
+                    className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold"
+                    style={
+                      active
+                        ? { background: "rgba(255,255,255,0.2)", color: "white" }
+                        : { background: `hsl(${hue},40%,88%)`, color: `hsl(${hue},55%,35%)` }
                     }
-                    e.target.value = "";
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => document.getElementById("file-upload")?.click()}
-                  disabled={uploadFileMutation.isPending}
-                  title="Upload File (.txt, .md, .csv)"
-                >
-                  {uploadFileMutation.isPending ? "Uploading..." : "📎"}
-                </Button>
-                <Button
-                  className="ml-2"
-                  type="button"
-                  onClick={handleSendTurn}
-                  disabled={!selectedSessionId || isStreaming || submitTurnMutation.isPending}
-                >
-                  {isStreaming ? "Streaming..." : submitTurnMutation.isPending ? "Sending..." : "Send Turn"}
-                </Button>
-              </div>
-            </div>
-            {composerError ? <p className="text-sm text-red-300">{composerError}</p> : null}
+                  >
+                    {initials(name)}
+                  </div>
+                  <span>{name}</span>
+                </button>
+              );
+            })}
           </div>
+        )}
 
-          {isStreaming || streamDraft || streamTrace.length > 0 ? (
-            <div className="mt-4 rounded-md border border-[--border] bg-[--bg-base] p-3">
-              <h3 className="text-sm font-semibold">Live Response</h3>
-              {streamTrace.length > 0 ? (
-                <ul className="mt-2 space-y-1 text-xs text-[--text-muted]">
-                  {streamTrace.map((line, index) => (
-                    <li key={`${line}-${index}`}>{line}</li>
-                  ))}
-                </ul>
-              ) : null}
-              <p className="mt-2 whitespace-pre-wrap text-sm">{streamDraft || "Waiting for chunks..."}</p>
-            </div>
-          ) : null}
-        </article>
-      </div>
-    </section>
+        {/* Composer */}
+        <div className="flex items-end gap-2 rounded-[20px] border border-border bg-input p-2 shadow-sm transition-all focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/30">
+          {/* File upload */}
+          <input
+            type="file"
+            id="file-upload"
+            className="hidden"
+            accept=".txt,.md,.csv,.pdf"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) uploadFileMutation.mutate(file);
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => document.getElementById("file-upload")?.click()}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted hover:bg-elevated hover:text-foreground transition-colors"
+          >
+            <Paperclip className="w-5 h-5" />
+          </button>
+
+          {/* Textarea */}
+          <textarea
+            ref={textareaRef}
+            className="min-h-[40px] max-h-[160px] w-full resize-none bg-transparent px-1 py-2 text-[15px] text-foreground outline-none placeholder:text-muted"
+            placeholder={
+              currentMode === "manual"
+                ? "Direct the Council…"
+                : currentMode === "roundtable"
+                  ? "Ask the Round Table…"
+                  : "Give the Auto-Pilot a mission…"
+            }
+            rows={1}
+            value={messageInput}
+            onChange={handleTextareaChange}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSendTurn();
+              }
+            }}
+            disabled={!selectedSessionId || isStreaming}
+          />
+
+          {/* Send */}
+          <button
+            onClick={handleSendTurn}
+            disabled={!selectedSessionId || isStreaming || !messageInput.trim()}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-white shadow-sm hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95"
+          >
+            <Send className="w-4 h-4" />
+          </button>
+        </div>
+      </footer>
+
+      {/* ── Manage Panel ────────────────────────────────────────────────────── */}
+      {managePanelOpen && roomQuery.data && (
+        <ManageRoomPanel
+          room={roomQuery.data}
+          agents={roomAgents}
+          allAgents={allAgentsQuery.data?.agents ?? []}
+          onClose={() => setManagePanelOpen(false)}
+        />
+      )}
+    </div>
   );
 }

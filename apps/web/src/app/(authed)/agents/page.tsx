@@ -2,18 +2,27 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
+import { MessageSquare } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { Modal } from "@/components/common/modal";
 import { Button } from "@/components/ui/button";
-import { createAgent, deleteAgent, listAgents, type AgentRead } from "@/lib/api/agents";
+import { createAgent, createAgentSession, deleteAgent, listAgents, updateAgent, type AgentRead } from "@/lib/api/agents";
 import { ApiError } from "@/lib/api/client";
 
-type CreateAgentFormState = {
+type AgentFormState = {
   name: string;
   modelAlias: string;
   rolePrompt: string;
   toolPermissions: string[];
+};
+
+const EMPTY_FORM: AgentFormState = {
+  name: "",
+  modelAlias: "deepseek",
+  rolePrompt: "",
+  toolPermissions: []
 };
 
 const AVAILABLE_MODELS: Array<{ value: string; label: string }> = [
@@ -58,16 +67,18 @@ function formatDate(iso: string): string {
 
 export default function AgentsPage() {
   const queryClient = useQueryClient();
-  const [createOpen, setCreateOpen] = useState(false);
+  const router = useRouter();
+
+  // Modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<AgentRead | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AgentRead | null>(null);
   const [formError, setFormError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
-  const [form, setForm] = useState<CreateAgentFormState>({
-    name: "",
-    modelAlias: "deepseek",
-    rolePrompt: "",
-    toolPermissions: []
-  });
+  const [form, setForm] = useState<AgentFormState>(EMPTY_FORM);
+
+  const isEditing = editingAgent !== null;
+  const modalTitle = isEditing ? `Edit ${editingAgent.name}` : "Create agent";
 
   const agentsQuery = useQuery({
     queryKey: ["agents"],
@@ -76,55 +87,46 @@ export default function AgentsPage() {
 
   const agents = useMemo(() => agentsQuery.data?.agents || [], [agentsQuery.data]);
 
-  const createAgentMutation = useMutation({
+  // --- Open modal for create ---
+  function openCreateModal() {
+    setEditingAgent(null);
+    setForm(EMPTY_FORM);
+    setFormError("");
+    setModalOpen(true);
+  }
+
+  // --- Open modal for edit ---
+  function openEditModal(agent: AgentRead) {
+    setEditingAgent(agent);
+    setForm({
+      name: agent.name,
+      modelAlias: agent.model_alias,
+      rolePrompt: agent.role_prompt || "",
+      toolPermissions: [...agent.tool_permissions]
+    });
+    setFormError("");
+    setModalOpen(true);
+  }
+
+  // --- Create mutation ---
+  const createMutation = useMutation({
     mutationFn: async () => {
       const trimmedName = form.name.trim();
-      const trimmedModel = form.modelAlias.trim();
-      if (!trimmedName) {
-        throw new ApiError(422, "Agent name is required.");
-      }
-      if (!trimmedModel) {
-        throw new ApiError(422, "Model is required.");
-      }
+      if (!trimmedName) throw new ApiError(422, "Agent name is required.");
       return createAgent({
         agent_key: buildAgentKey(trimmedName),
         name: trimmedName,
-        model_alias: trimmedModel,
+        model_alias: form.modelAlias.trim(),
         role_prompt: form.rolePrompt.trim(),
         tool_permissions: form.toolPermissions
       });
     },
-    onMutate: async () => {
-      setFormError("");
-      setActionMessage("");
-      await queryClient.cancelQueries({ queryKey: ["agents"] });
-      const previous = queryClient.getQueryData<{ agents: AgentRead[]; total: number }>(["agents"]);
-      const optimistic: AgentRead = {
-        id: `temp-${Date.now()}`,
-        owner_user_id: "me",
-        agent_key: `${slugify(form.name)}-pending`,
-        name: form.name || "Untitled Agent",
-        model_alias: form.modelAlias || "deepseek",
-        role_prompt: form.rolePrompt,
-        tool_permissions: form.toolPermissions,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-      queryClient.setQueryData(["agents"], {
-        agents: [optimistic, ...(previous?.agents || [])],
-        total: (previous?.total || 0) + 1
-      });
-      return { previous };
-    },
-    onError: (error, _vars, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(["agents"], context.previous);
-      }
+    onError: (error) => {
       setFormError(error instanceof ApiError ? error.detail : error instanceof Error ? error.message : "Failed to create agent.");
     },
     onSuccess: () => {
-      setCreateOpen(false);
-      setForm({ name: "", modelAlias: "deepseek", rolePrompt: "", toolPermissions: [] });
+      setModalOpen(false);
+      setForm(EMPTY_FORM);
       setActionMessage("Agent created successfully.");
     },
     onSettled: () => {
@@ -132,22 +134,37 @@ export default function AgentsPage() {
     }
   });
 
-  const deleteAgentMutation = useMutation({
-    mutationFn: (agentId: string) => deleteAgent(agentId),
-    onMutate: async (agentId) => {
-      setActionMessage("");
-      await queryClient.cancelQueries({ queryKey: ["agents"] });
-      const previous = queryClient.getQueryData<{ agents: AgentRead[]; total: number }>(["agents"]);
-      queryClient.setQueryData(["agents"], {
-        agents: (previous?.agents || []).filter((agent) => agent.id !== agentId),
-        total: Math.max((previous?.total || 1) - 1, 0)
+  // --- Update mutation ---
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingAgent) throw new Error("No agent selected for editing.");
+      const trimmedName = form.name.trim();
+      if (!trimmedName) throw new ApiError(422, "Agent name is required.");
+      return updateAgent(editingAgent.id, {
+        name: trimmedName,
+        model_alias: form.modelAlias.trim(),
+        role_prompt: form.rolePrompt.trim(),
+        tool_permissions: form.toolPermissions
       });
-      return { previous };
     },
-    onError: (error, _vars, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(["agents"], context.previous);
-      }
+    onError: (error) => {
+      setFormError(error instanceof ApiError ? error.detail : error instanceof Error ? error.message : "Failed to update agent.");
+    },
+    onSuccess: () => {
+      setModalOpen(false);
+      setEditingAgent(null);
+      setForm(EMPTY_FORM);
+      setActionMessage("Agent updated successfully.");
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+    }
+  });
+
+  // --- Delete mutation ---
+  const deleteMutation = useMutation({
+    mutationFn: (agentId: string) => deleteAgent(agentId),
+    onError: (error) => {
       setActionMessage(error instanceof ApiError ? error.detail : error instanceof Error ? error.message : "Failed to delete agent.");
     },
     onSuccess: () => {
@@ -159,71 +176,127 @@ export default function AgentsPage() {
     }
   });
 
+  // --- Start chat with agent ---
+  async function handleChatWithAgent(agent: AgentRead) {
+    try {
+      const session = await createAgentSession(agent.id);
+      router.push(`/agents/${agent.id}/chat?session=${session.id}`);
+    } catch (error) {
+      setActionMessage(error instanceof ApiError ? error.detail : "Failed to start agent session.");
+    }
+  }
+
+  // --- Form submit handler ---
+  function handleFormSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (isEditing) {
+      if (!updateMutation.isPending) updateMutation.mutate();
+    } else {
+      if (!createMutation.isPending) createMutation.mutate();
+    }
+  }
+
+  const isSaving = createMutation.isPending || updateMutation.isPending;
+
   return (
-    <section className="rounded-xl border border-[--border] bg-[--bg-surface] p-5">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Agents</h1>
-          <p className="mt-1 text-sm text-[--text-muted]">Manage reusable agents.</p>
-        </div>
-        <Button type="button" onClick={() => setCreateOpen(true)}>
-          Create Agent
-        </Button>
+    <div className="flex h-full flex-col bg-background p-6">
+      <div className="mx-auto w-full max-w-6xl">
+        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-[24px] font-bold text-foreground tracking-tight">Agents</h1>
+            <p className="mt-1 text-sm text-muted">Manage your custom council members.</p>
+          </div>
+          <Button onClick={openCreateModal} className="rounded-full bg-accent hover:bg-accent-hover text-white px-6 h-10 transition-colors shadow-sm">
+            Create Agent
+          </Button>
+        </header>
+
+        {actionMessage && <p className="mb-4 text-sm text-success">{actionMessage}</p>}
+        {agentsQuery.isError && (
+          <p className="mb-4 rounded-md bg-error/10 p-4 text-sm text-error border border-error/20">
+            {agentsQuery.error instanceof ApiError ? agentsQuery.error.detail : agentsQuery.error instanceof Error ? agentsQuery.error.message : "Failed to load agents."}
+          </p>
+        )}
+
+        {agentsQuery.isLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="h-48 rounded-xl bg-surface animate-pulse" />
+            ))}
+          </div>
+        ) : null}
+
+        {!agentsQuery.isLoading && agents.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border bg-surface py-24 text-center">
+            <h3 className="text-lg font-semibold text-foreground mb-2">No agents yet</h3>
+            <p className="text-sm text-muted max-w-sm mb-6">Create specialized agents to provide different perspectives in your council.</p>
+            <Button onClick={openCreateModal} className="rounded-full bg-accent hover:bg-accent-hover text-white">Create your first agent</Button>
+          </div>
+        ) : null}
+
+        {agents.length > 0 ? (
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {agents.map((agent) => (
+              <article key={agent.id} className="group flex flex-col justify-between rounded-xl bg-white dark:bg-surface border border-border p-5 shadow-[0_2px_10px_rgb(0,0,0,0.02)] transition-all hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] hover:border-borderFocus">
+                <div>
+                  <div className="mb-3 flex items-start justify-between gap-2">
+                    <h2 className="text-lg font-bold text-foreground leading-tight">{agent.name}</h2>
+                    <span className="shrink-0 rounded-full bg-elevated px-2.5 py-0.5 text-[10px] font-medium text-muted border border-border">
+                      {agent.model_alias}
+                    </span>
+                  </div>
+                  <p className="line-clamp-3 text-sm text-secondary leading-relaxed mb-4">
+                    {agent.role_prompt || "No system prompt defined."}
+                  </p>
+                  <div className="flex flex-wrap gap-1 mb-4">
+                    {agent.tool_permissions.map(tool => (
+                      <span key={tool} className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted">
+                        {tool}
+                      </span>
+                    ))}
+                    {agent.tool_permissions.length === 0 && <span className="text-[10px] text-muted italic">No tools</span>}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-4 border-t border-border mt-auto">
+                  <span className="text-[10px] text-muted">Created {formatDate(agent.created_at)}</span>
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-8 px-2.5 text-xs text-accent hover:text-accent-hover hover:bg-accent/10 gap-1"
+                      onClick={() => handleChatWithAgent(agent)}
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      Chat
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-8 px-2 text-xs text-muted hover:text-foreground"
+                      onClick={() => openEditModal(agent)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-8 px-2 text-xs text-error hover:bg-error/10"
+                      onClick={() => setDeleteTarget(agent)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
       </div>
 
-      {actionMessage ? <p className="mb-3 text-sm text-[--text-muted]">{actionMessage}</p> : null}
-      {agentsQuery.isError ? (
-        <p className="mb-3 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
-          {agentsQuery.error instanceof ApiError
-            ? agentsQuery.error.detail
-            : agentsQuery.error instanceof Error
-              ? agentsQuery.error.message
-              : "Failed to load agents."}
-        </p>
-      ) : null}
-
-      {agentsQuery.isLoading ? <p className="text-sm text-[--text-muted]">Loading agents...</p> : null}
-
-      {!agentsQuery.isLoading && agents.length === 0 ? (
-        <div className="rounded-md border border-dashed border-[--border] p-6 text-center text-sm text-[--text-muted]">
-          No agents yet. Create your first agent.
-        </div>
-      ) : null}
-
-      {agents.length > 0 ? (
-        <div className="grid gap-3 md:grid-cols-2">
-          {agents.map((agent) => (
-            <article key={agent.id} className="rounded-lg border border-[--border] bg-[--bg-base] p-4">
-              <div className="flex items-start justify-between gap-3">
-                <h2 className="text-lg font-semibold">{agent.name}</h2>
-                <span className="rounded-md bg-[--accent]/20 px-2 py-1 text-xs font-medium">{agent.model_alias}</span>
-              </div>
-              <p className="mt-2 text-xs text-[--text-muted]">Provider: OpenRouter</p>
-              <p className="mt-1 text-xs text-[--text-muted]">
-                Tools: {agent.tool_permissions.length > 0 ? agent.tool_permissions.join(", ") : "none"}
-              </p>
-              <p className="mt-1 text-xs text-[--text-muted]">Created: {formatDate(agent.created_at)}</p>
-              <div className="mt-4 flex justify-end">
-                <Button type="button" variant="ghost" onClick={() => setDeleteTarget(agent)}>
-                  Delete
-                </Button>
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : null}
-
-      <Modal open={createOpen} title="Create agent" onClose={() => setCreateOpen(false)}>
-        <form
-          className="grid gap-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (createAgentMutation.isPending) {
-              return;
-            }
-            createAgentMutation.mutate();
-          }}
-        >
+      {/* Create / Edit Modal */}
+      <Modal open={modalOpen} title={modalTitle} onClose={() => setModalOpen(false)}>
+        <form className="grid gap-3" onSubmit={handleFormSubmit}>
           <label className="grid gap-1 text-sm">
             <span className="text-[--text-muted]">Name</span>
             <input
@@ -287,14 +360,14 @@ export default function AgentsPage() {
             })}
           </fieldset>
 
-          {formError ? <p className="text-sm text-red-300">{formError}</p> : null}
+          {formError ? <p className="text-sm text-error">{formError}</p> : null}
 
           <div className="mt-2 flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)} disabled={createAgentMutation.isPending}>
+            <Button type="button" variant="ghost" onClick={() => setModalOpen(false)} disabled={isSaving}>
               Cancel
             </Button>
-            <Button type="submit" disabled={createAgentMutation.isPending}>
-              {createAgentMutation.isPending ? "Creating..." : "Create"}
+            <Button type="submit" disabled={isSaving} className="bg-accent hover:bg-accent-hover text-white">
+              {isSaving ? (isEditing ? "Saving..." : "Creating...") : (isEditing ? "Save Changes" : "Create")}
             </Button>
           </div>
         </form>
@@ -305,14 +378,14 @@ export default function AgentsPage() {
         title="Delete agent"
         description={`Delete '${deleteTarget?.name || "this agent"}'? This action cannot be undone.`}
         confirmLabel="Delete"
-        loading={deleteAgentMutation.isPending}
+        loading={deleteMutation.isPending}
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => {
           if (deleteTarget) {
-            deleteAgentMutation.mutate(deleteTarget.id);
+            deleteMutation.mutate(deleteTarget.id);
           }
         }}
       />
-    </section>
+    </div>
   );
 }

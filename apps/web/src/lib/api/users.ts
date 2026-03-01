@@ -13,3 +13,20 @@ export function getMyWallet(): Promise<WalletRead> {
   });
 }
 
+export type TransactionRead = {
+  id: string;
+  tx_type: string;
+  amount: string;
+  description: string;
+  created_at: string;
+};
+
+export type TransactionsResponse = {
+  transactions: TransactionRead[];
+};
+
+export function getMyTransactions(): Promise<TransactionsResponse> {
+  return apiFetch<TransactionsResponse>("/api/v1/users/me/transactions", {
+    method: "GET"
+  });
+}
