@@ -1151,9 +1151,9 @@
                   thinkBlock.style.padding = "8px 12px";
 
                   if (data.phase === "routing") {
-                    thinkBlock.innerHTML = `⚙️ <strong>Manager Routing (Round ${data.round})</strong><br>↳ <em>Selected Agents: ${data.target_agents.map(a => '@' + a).join(', ')}</em>`;
+                    thinkBlock.innerHTML = `⚙️ <strong>Director Routing (Round ${data.round})</strong><br>↳ <em>Selected Agents: ${data.target_agents.map(a => '@' + a).join(', ')}</em>`;
                   } else if (data.phase === "evaluation") {
-                    thinkBlock.innerHTML = `⚙️ <strong>Manager Evaluation</strong><br>↳ <em>Decision: ${data.decision === 'continue' ? 'Triggering next round' : 'End specialist rounds. Synthesizing final results.'}</em>`;
+                    thinkBlock.innerHTML = `⚙️ <strong>Director Evaluation</strong><br>↳ <em>Decision: ${data.decision === 'continue' ? 'Triggering next round' : 'End specialist rounds. Synthesizing final results.'}</em>`;
                   }
                   el.appendChild(thinkBlock);
                   el.scrollTop = el.scrollHeight;

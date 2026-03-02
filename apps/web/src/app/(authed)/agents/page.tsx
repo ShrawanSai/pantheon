@@ -1,15 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { MessageSquare } from "lucide-react";
+import Link from "next/link";
+import { MessageSquare, Settings2, Store } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { Modal } from "@/components/common/modal";
 import { Button } from "@/components/ui/button";
 import { createAgent, createAgentSession, deleteAgent, listAgents, updateAgent, type AgentRead } from "@/lib/api/agents";
 import { ApiError } from "@/lib/api/client";
+import { debugError, debugLog } from "@/lib/debug";
 
 type AgentFormState = {
   name: string;
@@ -20,18 +22,19 @@ type AgentFormState = {
 
 const EMPTY_FORM: AgentFormState = {
   name: "",
-  modelAlias: "deepseek",
+  modelAlias: "gemini-flash",
   rolePrompt: "",
   toolPermissions: []
 };
 
 const AVAILABLE_MODELS: Array<{ value: string; label: string }> = [
-  { value: "deepseek", label: "DeepSeek" },
-  { value: "qwen", label: "Qwen" },
-  { value: "llama", label: "Llama" },
-  { value: "free", label: "Free" },
-  { value: "gpt_oss", label: "GPT OSS" },
-  { value: "premium", label: "Premium" }
+  { value: "gemini-flash", label: "Gemini 2.5 Flash" },
+  { value: "gemini-pro", label: "Gemini 2.5 Pro" },
+  { value: "deepseek", label: "DeepSeek V3" },
+  { value: "qwen3", label: "Qwen3 235B" },
+  { value: "llama-4-scout", label: "Llama 4 Scout" },
+  { value: "gpt-oss", label: "GPT OSS 120B" },
+  { value: "mistral-small", label: "Mistral Small" }
 ];
 
 const AVAILABLE_TOOLS: Array<{ value: string; label: string; description: string }> = [
@@ -85,6 +88,21 @@ export default function AgentsPage() {
     queryFn: listAgents
   });
 
+  useEffect(() => {
+    if (agentsQuery.data?.agents) {
+      debugLog("agents-page", "list_success", {
+        count: agentsQuery.data.agents.length,
+      });
+    }
+  }, [agentsQuery.data]);
+
+  useEffect(() => {
+    if (!agentsQuery.isError) {
+      return;
+    }
+    debugError("agents-page", "list_failed", { error: agentsQuery.error });
+  }, [agentsQuery.error, agentsQuery.isError]);
+
   const agents = useMemo(() => agentsQuery.data?.agents || [], [agentsQuery.data]);
 
   // --- Open modal for create ---
@@ -121,10 +139,19 @@ export default function AgentsPage() {
         tool_permissions: form.toolPermissions
       });
     },
+    onMutate: () => {
+      debugLog("agents-page", "create_start", {
+        name: form.name,
+        modelAlias: form.modelAlias,
+        tools: form.toolPermissions,
+      });
+    },
     onError: (error) => {
+      debugError("agents-page", "create_failed", { error });
       setFormError(error instanceof ApiError ? error.detail : error instanceof Error ? error.message : "Failed to create agent.");
     },
     onSuccess: () => {
+      debugLog("agents-page", "create_success");
       setModalOpen(false);
       setForm(EMPTY_FORM);
       setActionMessage("Agent created successfully.");
@@ -147,10 +174,20 @@ export default function AgentsPage() {
         tool_permissions: form.toolPermissions
       });
     },
+    onMutate: () => {
+      debugLog("agents-page", "update_start", {
+        agentId: editingAgent?.id,
+        name: form.name,
+        modelAlias: form.modelAlias,
+        tools: form.toolPermissions,
+      });
+    },
     onError: (error) => {
+      debugError("agents-page", "update_failed", { error, agentId: editingAgent?.id });
       setFormError(error instanceof ApiError ? error.detail : error instanceof Error ? error.message : "Failed to update agent.");
     },
     onSuccess: () => {
+      debugLog("agents-page", "update_success", { agentId: editingAgent?.id });
       setModalOpen(false);
       setEditingAgent(null);
       setForm(EMPTY_FORM);
@@ -164,10 +201,15 @@ export default function AgentsPage() {
   // --- Delete mutation ---
   const deleteMutation = useMutation({
     mutationFn: (agentId: string) => deleteAgent(agentId),
+    onMutate: (agentId) => {
+      debugLog("agents-page", "delete_start", { agentId });
+    },
     onError: (error) => {
+      debugError("agents-page", "delete_failed", { error });
       setActionMessage(error instanceof ApiError ? error.detail : error instanceof Error ? error.message : "Failed to delete agent.");
     },
     onSuccess: () => {
+      debugLog("agents-page", "delete_success");
       setDeleteTarget(null);
       setActionMessage("Agent deleted.");
     },
@@ -179,9 +221,12 @@ export default function AgentsPage() {
   // --- Start chat with agent ---
   async function handleChatWithAgent(agent: AgentRead) {
     try {
+      debugLog("agents-page", "chat_start", { agentId: agent.id });
       const session = await createAgentSession(agent.id);
+      debugLog("agents-page", "chat_success", { agentId: agent.id, sessionId: session.id });
       router.push(`/agents/${agent.id}/chat?session=${session.id}`);
     } catch (error) {
+      debugError("agents-page", "chat_failed", { agentId: agent.id, error });
       setActionMessage(error instanceof ApiError ? error.detail : "Failed to start agent session.");
     }
   }
@@ -206,9 +251,15 @@ export default function AgentsPage() {
             <h1 className="text-[24px] font-bold text-foreground tracking-tight">Agents</h1>
             <p className="mt-1 text-sm text-muted">Manage your custom council members.</p>
           </div>
-          <Button onClick={openCreateModal} className="rounded-full bg-accent hover:bg-accent-hover text-white px-6 h-10 transition-colors shadow-sm">
-            Create Agent
-          </Button>
+          <div className="flex items-center gap-2">
+            <Link href="/marketplace" className="flex items-center gap-2 rounded-full border border-border px-4 h-10 text-sm font-medium text-muted hover:text-accent hover:border-accent transition-colors">
+              <Store className="w-4 h-4" />
+              Marketplace
+            </Link>
+            <Button onClick={openCreateModal} className="rounded-full bg-accent hover:bg-accent-hover text-white px-6 h-10 transition-colors shadow-sm">
+              Create Agent
+            </Button>
+          </div>
         </header>
 
         {actionMessage && <p className="mb-4 text-sm text-success">{actionMessage}</p>}
@@ -270,14 +321,13 @@ export default function AgentsPage() {
                       <MessageSquare className="h-3.5 w-3.5" />
                       Chat
                     </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-8 px-2 text-xs text-muted hover:text-foreground"
-                      onClick={() => openEditModal(agent)}
+                    <Link
+                      href={`/agents/${agent.id}`}
+                      className="inline-flex items-center gap-1 h-8 px-2 text-xs text-muted hover:text-foreground rounded-md hover:bg-elevated transition-colors"
                     >
-                      Edit
-                    </Button>
+                      <Settings2 className="h-3.5 w-3.5" />
+                      Configure
+                    </Link>
                     <Button
                       type="button"
                       variant="ghost"

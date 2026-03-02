@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import logging
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -18,12 +19,14 @@ from apps.api.app.schemas.agents import AgentRead
 from apps.api.app.schemas.rooms import (
     RoomAgentCreateRequest,
     RoomAgentRead,
+    RoomAgentReorderRequest,
     RoomCreateRequest,
     RoomModeUpdateRequest,
     RoomRead,
 )
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
+_LOGGER = logging.getLogger(__name__)
 
 
 def _room_to_read(room: Room) -> RoomRead:
@@ -247,6 +250,53 @@ async def list_room_agents(
         .order_by(RoomAgent.position.asc(), RoomAgent.created_at.asc())
     )
     return [_assignment_to_read(agent) for agent in result.all()]
+
+
+@router.patch("/{room_id}/agents/reorder", response_model=list[RoomAgentRead])
+async def reorder_room_agents(
+    room_id: str,
+    payload: RoomAgentReorderRequest,
+    current_user: dict[str, str] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[RoomAgentRead]:
+    user_id = current_user["user_id"]
+    await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
+    _LOGGER.info(
+        "reorder_room_agents:start user_id=%s room_id=%s requested_order=%s",
+        user_id,
+        room_id,
+        payload.agent_ids,
+    )
+
+    for idx, agent_id in enumerate(payload.agent_ids, start=1):
+        assignment = await db.scalar(
+            select(RoomAgent).where(
+                RoomAgent.room_id == room_id,
+                RoomAgent.agent_id == agent_id,
+            )
+        )
+        if assignment is not None:
+            assignment.position = idx
+
+    await db.commit()
+
+    result = await db.scalars(
+        select(RoomAgent)
+        .options(selectinload(RoomAgent.agent))
+        .join(Agent, Agent.id == RoomAgent.agent_id)
+        .where(
+            RoomAgent.room_id == room_id,
+            Agent.deleted_at.is_(None),
+        )
+        .order_by(RoomAgent.position.asc(), RoomAgent.created_at.asc())
+    )
+    ordered = [_assignment_to_read(a) for a in result.all()]
+    _LOGGER.info(
+        "reorder_room_agents:done room_id=%s persisted_order=%s",
+        room_id,
+        [item.agent.agent_key for item in ordered],
+    )
+    return ordered
 
 
 @router.delete("/{room_id}/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)

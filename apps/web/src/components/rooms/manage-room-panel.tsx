@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
-import { X, GripVertical, Ban, PlusCircle, Touchpad, Users, Zap, Trash2, ArrowLeft, Search, CheckCircle2 } from "lucide-react";
+import { X, GripVertical, Ban, PlusCircle, Touchpad, Users, Zap, Trash2, ArrowLeft, Search, CheckCircle2, Pencil, Check, ArrowUp, ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { updateRoomMode, removeRoomAgent, deleteRoom, assignRoomAgent, type RoomRead, type RoomMode, type RoomAgentRead } from "@/lib/api/rooms";
+import { updateRoomMode, updateRoom, removeRoomAgent, deleteRoom, assignRoomAgent, reorderRoomAgents, type RoomRead, type RoomMode, type RoomAgentRead } from "@/lib/api/rooms";
 import { type AgentRead } from "@/lib/api/agents";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { useRouter } from "next/navigation";
+import { debugError, debugLog } from "@/lib/debug";
 
 type ManageRoomPanelProps = {
     room: RoomRead;
@@ -23,36 +24,122 @@ export function ManageRoomPanel({ room, agents, allAgents, onClose }: ManageRoom
     const [isAddingExpert, setIsAddingExpert] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [addingIds, setAddingIds] = useState<Set<string>>(new Set());
+    const [editingName, setEditingName] = useState(false);
+    const [nameValue, setNameValue] = useState(room.name);
+    const [orderedAgents, setOrderedAgents] = useState<RoomAgentRead[]>(agents);
+    const [draggingAgentId, setDraggingAgentId] = useState<string | null>(null);
+
+    useEffect(() => {
+        setOrderedAgents(agents);
+    }, [agents]);
 
     const modeMutation = useMutation({
         mutationFn: async (mode: RoomMode) => updateRoomMode(room.id, mode),
+        onMutate: (mode) => {
+            debugLog("manage-room", "mode_update_start", {
+                roomId: room.id,
+                from: room.current_mode,
+                to: mode,
+            });
+        },
         onSuccess: () => {
+            debugLog("manage-room", "mode_update_success", { roomId: room.id });
             queryClient.invalidateQueries({ queryKey: ["room", room.id] });
-        }
+        },
+        onError: (error) => {
+            debugError("manage-room", "mode_update_failed", { roomId: room.id, error });
+        },
     });
 
     const removeAgentMutation = useMutation({
         mutationFn: async (agentId: string) => removeRoomAgent(room.id, agentId),
+        onMutate: (agentId: string) => {
+            debugLog("manage-room", "remove_agent_start", { roomId: room.id, agentId });
+            setOrderedAgents((prev) => prev.filter((assignment) => assignment.agent_id !== agentId));
+        },
+        onError: () => {
+            debugError("manage-room", "remove_agent_failed", { roomId: room.id });
+            setOrderedAgents(agents);
+        },
         onSuccess: () => {
+            debugLog("manage-room", "remove_agent_success", { roomId: room.id });
             queryClient.invalidateQueries({ queryKey: ["roomAgents", room.id] });
         }
+    });
+
+    const reorderAgentsMutation = useMutation({
+        mutationFn: async (agentIds: string[]) => reorderRoomAgents(room.id, agentIds),
+        onMutate: (agentIds) => {
+            debugLog("manage-room", "reorder_start", { roomId: room.id, agentIds });
+        },
+        onError: () => {
+            debugError("manage-room", "reorder_failed", { roomId: room.id });
+            setOrderedAgents(agents);
+        },
+        onSuccess: () => {
+            debugLog("manage-room", "reorder_success", {
+                roomId: room.id,
+                orderedAgentIds: orderedAgents.map((a) => a.agent_id),
+            });
+            queryClient.invalidateQueries({ queryKey: ["roomAgents", room.id] });
+        },
     });
 
     const deleteRoomMutation = useMutation({
         mutationFn: async () => deleteRoom(room.id),
+        onMutate: () => {
+            debugLog("manage-room", "delete_room_start", { roomId: room.id });
+        },
         onSuccess: () => {
+            debugLog("manage-room", "delete_room_success", { roomId: room.id });
             router.push("/rooms");
-        }
+        },
+        onError: (error) => {
+            debugError("manage-room", "delete_room_failed", { roomId: room.id, error });
+        },
     });
 
     const assignAgentMutation = useMutation({
         mutationFn: async (agentId: string) => assignRoomAgent(room.id, { agent_id: agentId }),
+        onMutate: (agentId) => {
+            debugLog("manage-room", "assign_agent_start", { roomId: room.id, agentId });
+        },
         onSuccess: () => {
+            debugLog("manage-room", "assign_agent_success", { roomId: room.id });
             queryClient.invalidateQueries({ queryKey: ["roomAgents", room.id] });
-        }
+        },
+        onError: (error) => {
+            debugError("manage-room", "assign_agent_failed", { roomId: room.id, error });
+        },
     });
 
-    const assignedAgentIds = new Set(agents.map(a => a.agent_id));
+    const renameRoomMutation = useMutation({
+        mutationFn: async (name: string) => updateRoom(room.id, { name }),
+        onMutate: (name) => {
+            debugLog("manage-room", "rename_room_start", {
+                roomId: room.id,
+                from: room.name,
+                to: name,
+            });
+        },
+        onSuccess: () => {
+            debugLog("manage-room", "rename_room_success", { roomId: room.id });
+            queryClient.invalidateQueries({ queryKey: ["room", room.id] });
+            queryClient.invalidateQueries({ queryKey: ["rooms"] });
+            setEditingName(false);
+        },
+        onError: (error) => {
+            debugError("manage-room", "rename_room_failed", { roomId: room.id, error });
+        },
+    });
+
+    function handleSaveName() {
+        const trimmed = nameValue.trim();
+        if (!trimmed || trimmed === room.name) { setEditingName(false); return; }
+        renameRoomMutation.mutate(trimmed);
+    }
+
+    const assignedAgentIds = new Set(orderedAgents.map(a => a.agent_id));
     const availableAgents = allAgents.filter(a => !assignedAgentIds.has(a.id) && (
         a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (a.role_prompt && a.role_prompt.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -69,6 +156,59 @@ export function ManageRoomPanel({ room, agents, allAgents, onClose }: ManageRoom
         setIsAddingExpert(false);
     };
 
+    function moveAgent(list: RoomAgentRead[], draggedAgentId: string, targetAgentId: string): RoomAgentRead[] {
+        if (draggedAgentId === targetAgentId) {
+            return list;
+        }
+        const fromIndex = list.findIndex((assignment) => assignment.agent_id === draggedAgentId);
+        const toIndex = list.findIndex((assignment) => assignment.agent_id === targetAgentId);
+        if (fromIndex < 0 || toIndex < 0) {
+            return list;
+        }
+        const next = [...list];
+        const [dragged] = next.splice(fromIndex, 1);
+        next.splice(toIndex, 0, dragged);
+        return next;
+    }
+
+    function handleDrop(targetAgentId: string) {
+        debugLog("manage-room", "drag_drop", {
+            roomId: room.id,
+            draggingAgentId,
+            targetAgentId,
+        });
+        if (!draggingAgentId || draggingAgentId === targetAgentId) {
+            setDraggingAgentId(null);
+            return;
+        }
+        const next = moveAgent(orderedAgents, draggingAgentId, targetAgentId);
+        setOrderedAgents(next);
+        setDraggingAgentId(null);
+        const orderedIds = next.map((assignment) => assignment.agent_id);
+        reorderAgentsMutation.mutate(orderedIds);
+    }
+
+    function moveAgentByDelta(agentId: string, delta: -1 | 1) {
+        debugLog("manage-room", "move_agent_by_delta", {
+            roomId: room.id,
+            agentId,
+            delta,
+        });
+        const currentIndex = orderedAgents.findIndex((assignment) => assignment.agent_id === agentId);
+        if (currentIndex < 0) {
+            return;
+        }
+        const targetIndex = currentIndex + delta;
+        if (targetIndex < 0 || targetIndex >= orderedAgents.length) {
+            return;
+        }
+        const next = [...orderedAgents];
+        const [moved] = next.splice(currentIndex, 1);
+        next.splice(targetIndex, 0, moved);
+        setOrderedAgents(next);
+        reorderAgentsMutation.mutate(next.map((assignment) => assignment.agent_id));
+    }
+
     // Basic styling mapping closely to Stitch design "Manage Room"
     return (
         <div className="fixed inset-y-0 right-0 w-full md:w-[480px] bg-background border-l border-border shadow-2xl flex flex-col z-50 animate-in slide-in-from-right duration-300">
@@ -78,7 +218,29 @@ export function ManageRoomPanel({ room, agents, allAgents, onClose }: ManageRoom
                 </button>
                 <div className="flex flex-col items-center flex-1">
                     <h2 className="text-muted text-xs font-bold uppercase tracking-[0.2em] leading-tight">{isAddingExpert ? "Add Experts" : "Manage Council"}</h2>
-                    <h3 className="text-foreground text-base font-semibold leading-tight">{room.name}</h3>
+                    {!isAddingExpert && editingName ? (
+                        <div className="flex items-center gap-1 mt-0.5">
+                            <input
+                                autoFocus
+                                className="text-foreground text-base font-semibold bg-transparent border-b-2 border-accent outline-none text-center w-40"
+                                value={nameValue}
+                                onChange={e => setNameValue(e.target.value)}
+                                onKeyDown={e => { if (e.key === "Enter") handleSaveName(); if (e.key === "Escape") setEditingName(false); }}
+                            />
+                            <button onClick={handleSaveName} disabled={renameRoomMutation.isPending} className="text-accent hover:opacity-80 transition-opacity">
+                                <Check className="w-4 h-4" />
+                            </button>
+                        </div>
+                    ) : (
+                        <button
+                            onClick={() => { setNameValue(room.name); setEditingName(true); }}
+                            className="flex items-center gap-1 text-foreground text-base font-semibold leading-tight hover:text-accent transition-colors group"
+                            title="Click to rename"
+                        >
+                            <span>{room.name}</span>
+                            {!isAddingExpert && <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />}
+                        </button>
+                    )}
                 </div>
                 <div className="flex w-10 items-center justify-end">
                     <button onClick={onClose} className="flex items-center justify-center rounded-full h-10 w-10 text-muted hover:text-foreground transition-colors">
@@ -147,14 +309,24 @@ export function ManageRoomPanel({ room, agents, allAgents, onClose }: ManageRoom
                         <div className="px-6 pt-8 pb-4">
                             <div className="flex items-center justify-between mb-4">
                                 <h4 className="text-foreground text-xl font-bold tracking-tight">Agent Roster</h4>
-                                <span className="text-xs font-mono bg-accent/10 text-accent px-2 py-1 rounded-md font-bold">{agents.length} ACTIVE</span>
+                                <span className="text-xs font-mono bg-accent/10 text-accent px-2 py-1 rounded-md font-bold">{orderedAgents.length} ACTIVE</span>
                             </div>
 
                             <div className="space-y-3">
-                                {agents.map((assignment) => {
+                                {orderedAgents.map((assignment, index) => {
                                     const fullAgent = allAgents.find(a => a.id === assignment.agent_id) || assignment.agent;
                                     return (
-                                        <div key={assignment.id} className="flex items-center gap-4 bg-surface/50 border border-border p-4 rounded-xl shadow-sm">
+                                        <div
+                                            key={assignment.id}
+                                            className="flex items-center gap-4 bg-surface/50 border border-border p-4 rounded-xl shadow-sm"
+                                            draggable={!reorderAgentsMutation.isPending}
+                                            onDragStart={() => setDraggingAgentId(assignment.agent_id)}
+                                            onDragOver={(e) => {
+                                                e.preventDefault();
+                                            }}
+                                            onDrop={() => handleDrop(assignment.agent_id)}
+                                            onDragEnd={() => setDraggingAgentId(null)}
+                                        >
                                             <div className="text-muted cursor-grab active:cursor-grabbing hover:text-foreground transition-colors">
                                                 <GripVertical className="w-5 h-5" />
                                             </div>
@@ -164,6 +336,26 @@ export function ManageRoomPanel({ room, agents, allAgents, onClose }: ManageRoom
                                             <div className="flex flex-col flex-1 min-w-0">
                                                 <p className="text-foreground text-base font-semibold leading-none truncate">{fullAgent.name}</p>
                                                 <p className="text-muted text-xs mt-1 font-medium truncate">{fullAgent.role_prompt || "General AI"}</p>
+                                            </div>
+                                            <div className="flex items-center gap-1 shrink-0">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => moveAgentByDelta(assignment.agent_id, -1)}
+                                                    disabled={reorderAgentsMutation.isPending || index === 0}
+                                                    className="text-muted hover:text-foreground transition-colors p-1 disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    title="Move up"
+                                                >
+                                                    <ArrowUp className="w-4 h-4" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => moveAgentByDelta(assignment.agent_id, 1)}
+                                                    disabled={reorderAgentsMutation.isPending || index === orderedAgents.length - 1}
+                                                    className="text-muted hover:text-foreground transition-colors p-1 disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    title="Move down"
+                                                >
+                                                    <ArrowDown className="w-4 h-4" />
+                                                </button>
                                             </div>
                                             <button
                                                 onClick={() => removeAgentMutation.mutate(assignment.agent_id)}

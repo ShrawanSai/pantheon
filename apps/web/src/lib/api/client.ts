@@ -26,6 +26,42 @@ function getApiTimeoutMs(): number {
   return 15_000;
 }
 
+function parseErrorDetail(payload: unknown, fallback: string): string {
+  if (!payload || typeof payload !== "object") {
+    return fallback;
+  }
+
+  const data = payload as Record<string, unknown>;
+  const detail = data.detail;
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>).msg : null))
+      .filter((msg): msg is string => typeof msg === "string" && msg.trim().length > 0);
+    if (messages.length > 0) {
+      return messages.join("; ");
+    }
+  }
+  if (detail && typeof detail === "object") {
+    const detailObj = detail as Record<string, unknown>;
+    if (typeof detailObj.message === "string") {
+      return detailObj.message;
+    }
+    if (typeof detailObj.detail === "string") {
+      return detailObj.detail;
+    }
+    if (typeof detailObj.code === "string") {
+      return detailObj.code;
+    }
+  }
+  if (typeof data.message === "string") {
+    return data.message;
+  }
+  return fallback;
+}
+
 async function redirectToLogin() {
   const supabase = getSupabaseBrowserClient();
   await supabase.auth.signOut();
@@ -70,13 +106,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     let detail = response.statusText || "Request failed";
     try {
       const payload = await response.json();
-      if (typeof payload?.detail === "string") {
-        detail = payload.detail;
-      } else if (typeof payload?.message === "string") {
-        detail = payload.message;
-      } else if (payload?.detail && typeof payload.detail === "object") {
-        detail = payload.detail.detail || detail;
-      }
+      detail = parseErrorDetail(payload, detail);
     } catch {
       const fallback = await response.text().catch(() => "");
       if (fallback.trim()) {

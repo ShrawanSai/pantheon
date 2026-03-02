@@ -76,3 +76,9 @@ class RoomAgentRead(BaseModel):
     agent: AgentRead
     position: int
     created_at: datetime
+
+
+class RoomAgentReorderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_ids: list[str] = Field(min_length=1)

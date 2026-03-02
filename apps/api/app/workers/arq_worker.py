@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from apps.api.app.workers.jobs.file_parse import file_parse
 from apps.api.app.workers.jobs.health_ping import health_ping
+from apps.api.app.workers.jobs.session_naming import session_naming
 from apps.api.app.workers.jobs.session_summary import session_summary
 
 load_dotenv()
@@ -35,7 +36,7 @@ class _LazyRedisSettings:
 
 
 class WorkerSettings:
-    functions = [health_ping, file_parse, session_summary]
+    functions = [health_ping, file_parse, session_naming, session_summary]
     job_timeout = 60
     keep_result = 60
     redis_settings = _LazyRedisSettings()

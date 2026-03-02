@@ -17,20 +17,13 @@ class LlmSpec:
 
 
 SUPPORTED_LLMS: dict[str, LlmSpec] = {
-    "free": LlmSpec(alias="free", model_id="mistralai/mistral-small-3.1-24b-instruct:free", tier="free"),
-    "llama": LlmSpec(alias="llama", model_id="meta-llama/llama-4-scout", tier="economy"),
-    "qwen": LlmSpec(
-        alias="qwen",
-        model_id="qwen/qwen3-235b-a22b",
-        tier="economy",
-    ),
-    "deepseek": LlmSpec(
-        alias="deepseek",
-        model_id="google/gemini-2.5-flash",
-        tier="standard",
-    ),
-    "gpt_oss": LlmSpec(alias="gpt_oss", model_id="openai/gpt-oss-120b", tier="advanced"),
-    "premium": LlmSpec(alias="premium", model_id="google/gemini-2.5-pro", tier="premium"),
+    "mistral-small": LlmSpec(alias="mistral-small", model_id="mistralai/mistral-small-3.1-24b-instruct:free", tier="free"),
+    "llama-4-scout": LlmSpec(alias="llama-4-scout", model_id="meta-llama/llama-4-scout", tier="economy"),
+    "qwen3": LlmSpec(alias="qwen3", model_id="qwen/qwen3-235b-a22b", tier="economy"),
+    "deepseek": LlmSpec(alias="deepseek", model_id="deepseek/deepseek-chat-v3-0324", tier="economy"),
+    "gemini-flash": LlmSpec(alias="gemini-flash", model_id="google/gemini-2.5-flash", tier="standard"),
+    "gpt-oss": LlmSpec(alias="gpt-oss", model_id="openai/gpt-oss-120b", tier="advanced"),
+    "gemini-pro": LlmSpec(alias="gemini-pro", model_id="google/gemini-2.5-pro", tier="premium"),
 }
 
 

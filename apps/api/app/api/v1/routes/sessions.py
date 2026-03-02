@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.app.core.config import get_settings
 from apps.api.app.db.models import (
     Agent,
+    LlmCallEvent,
     ToolCallEvent,
     Message,
     Room,
@@ -34,12 +35,15 @@ from apps.api.app.db.models import (
 from apps.api.app.db.session import get_db
 from apps.api.app.dependencies.auth import get_current_user
 from apps.api.app.dependencies.rooms import get_owned_active_room_or_404
-from apps.api.app.schemas.chat import SessionRead, TurnCreateRequest, TurnRead
+from apps.api.app.schemas.chat import SessionRead, SessionUpdateRequest, TurnCreateRequest, TurnRead
 from apps.api.app.schemas.chat import (
+    ModelCostRead,
+    SessionAnalyticsRead,
     SessionMessageListRead,
     SessionMessageRead,
     SessionTurnHistoryRead,
     SessionTurnListRead,
+    TurnCostRead,
 )
 from apps.api.app.services.llm.gateway import (
     GatewayMessage,
@@ -76,7 +80,8 @@ from apps.api.app.services.usage.meter import (
 from apps.api.app.services.usage.recorder import UsageRecord, UsageRecorder, get_usage_recorder
 
 router = APIRouter(tags=["sessions"])
-_TAG_PATTERN = re.compile(r"@([a-zA-Z0-9_]+)")
+# Agent keys can contain hyphens (e.g. "venture-capitalist-abc123").
+_TAG_PATTERN = re.compile(r"@([a-zA-Z0-9_-]+)")
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -89,13 +94,27 @@ def _session_to_read(session: Session) -> SessionRead:
         room_id=session.room_id,
         agent_id=session.agent_id,
         started_by_user_id=session.started_by_user_id,
+        name=session.name,
         created_at=session.created_at,
         deleted_at=session.deleted_at,
     )
 
 
 def _extract_tagged_agent_keys(message: str) -> list[str]:
-    tags = _TAG_PATTERN.findall(message)
+    normalized_message = message.translate(
+        str.maketrans(
+            {
+                "‑": "-",  # non-breaking hyphen
+                "–": "-",  # en dash
+                "—": "-",  # em dash
+                "−": "-",  # minus sign
+                "﹘": "-",  # small em dash
+                "﹣": "-",  # small hyphen-minus
+                "－": "-",  # full-width hyphen-minus
+            }
+        )
+    )
+    tags = _TAG_PATTERN.findall(normalized_message)
     seen: set[str] = set()
     ordered: list[str] = []
     for tag in tags:
@@ -104,6 +123,116 @@ def _extract_tagged_agent_keys(message: str) -> list[str]:
             seen.add(normalized)
             ordered.append(normalized)
     return ordered
+
+
+def _normalize_slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+
+
+def _resolve_tagged_room_agents(
+    room_agents: list[RoomAgent],
+    tagged_keys: list[str],
+) -> tuple[list[RoomAgent], list[str]]:
+    by_exact_key: dict[str, RoomAgent] = {}
+    by_key_slug: dict[str, RoomAgent] = {}
+    by_name_slug: dict[str, RoomAgent] = {}
+    available_keys: list[str] = []
+
+    for assignment in room_agents:
+        if assignment.agent is None:
+            continue
+        agent_key = (assignment.agent.agent_key or "").strip().lower()
+        if agent_key:
+            by_exact_key[agent_key] = assignment
+            available_keys.append(agent_key)
+            key_slug = _normalize_slug(agent_key)
+            if key_slug and key_slug not in by_key_slug:
+                by_key_slug[key_slug] = assignment
+        name_slug = _normalize_slug(assignment.agent.name or "")
+        if name_slug and name_slug not in by_name_slug:
+            by_name_slug[name_slug] = assignment
+
+    selected: list[RoomAgent] = []
+    selected_ids: set[str] = set()
+    unmatched: list[str] = []
+
+    for tag in tagged_keys:
+        normalized = tag.strip().lower()
+        if not normalized:
+            continue
+
+        chosen: RoomAgent | None = by_exact_key.get(normalized)
+        tag_slug = _normalize_slug(normalized)
+
+        if chosen is None and tag_slug:
+            chosen = by_key_slug.get(tag_slug)
+
+        if chosen is None:
+            key_matches = [assignment for key, assignment in by_exact_key.items() if key.startswith(normalized)]
+            if not key_matches and tag_slug:
+                key_matches = [
+                    assignment
+                    for key_slug, assignment in by_key_slug.items()
+                    if key_slug.startswith(tag_slug) or tag_slug.startswith(key_slug)
+                ]
+            key_matches_unique = list({assignment.id: assignment for assignment in key_matches}.values())
+            if len(key_matches_unique) == 1:
+                chosen = key_matches_unique[0]
+
+        if chosen is None:
+            chosen = by_name_slug.get(tag_slug)
+            if chosen is None:
+                name_matches = [
+                    assignment
+                    for name_slug, assignment in by_name_slug.items()
+                    if name_slug.startswith(tag_slug) or tag_slug.startswith(name_slug)
+                ]
+                name_matches_unique = list({assignment.id: assignment for assignment in name_matches}.values())
+                if len(name_matches_unique) == 1:
+                    chosen = name_matches_unique[0]
+
+        if chosen is None:
+            unmatched.append(normalized)
+            continue
+
+        if chosen.id not in selected_ids:
+            selected_ids.add(chosen.id)
+            selected.append(chosen)
+
+    return selected, unmatched
+
+
+def _safe_preview(text: str, limit: int = 120) -> str:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[:limit]}..."
+
+
+def _canonical_display_agent_name(
+    *,
+    role: str,
+    agent_name: str | None,
+    source_agent_key: str | None,
+    agent_key: str | None,
+) -> str | None:
+    if role != "assistant":
+        return agent_name
+    normalized_name = (agent_name or "").strip().lower()
+    normalized_source = (source_agent_key or "").strip().lower()
+    normalized_key = (agent_key or "").strip().lower()
+    director_aliases = {"manager", "conductor", "synthesizer", "director"}
+    def _matches_alias(value: str) -> bool:
+        if not value:
+            return False
+        return any(alias in value for alias in director_aliases)
+    if (
+        _matches_alias(normalized_name)
+        or _matches_alias(normalized_source)
+        or _matches_alias(normalized_key)
+    ):
+        return "Director"
+    return agent_name
 
 
 async def _get_owned_active_session_or_404(
@@ -238,6 +367,7 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
 ) -> SessionRead:
     user_id = current_user["user_id"]
+    _LOGGER.info("create_session:start user_id=%s room_id=%s", user_id, room_id)
     await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
 
     session = Session(
@@ -250,6 +380,7 @@ async def create_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
+    _LOGGER.info("create_session:done user_id=%s room_id=%s session_id=%s", user_id, room_id, session.id)
     return _session_to_read(session)
 
 
@@ -260,6 +391,7 @@ async def list_sessions(
     db: AsyncSession = Depends(get_db),
 ) -> list[SessionRead]:
     user_id = current_user["user_id"]
+    _LOGGER.info("list_sessions:start user_id=%s room_id=%s", user_id, room_id)
     await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
 
     result = await db.scalars(
@@ -270,7 +402,15 @@ async def list_sessions(
         )
         .order_by(Session.created_at.desc())
     )
-    return [_session_to_read(item) for item in result.all()]
+    sessions = [_session_to_read(item) for item in result.all()]
+    _LOGGER.info(
+        "list_sessions:done user_id=%s room_id=%s count=%s named=%s",
+        user_id,
+        room_id,
+        len(sessions),
+        sum(1 for session in sessions if session.name),
+    )
+    return sessions
 
 
 @router.post("/agents/{agent_id}/sessions", response_model=SessionRead, status_code=status.HTTP_201_CREATED)
@@ -280,6 +420,7 @@ async def create_agent_session(
     db: AsyncSession = Depends(get_db),
 ) -> SessionRead:
     user_id = current_user["user_id"]
+    _LOGGER.info("create_agent_session:start user_id=%s agent_id=%s", user_id, agent_id)
     await _get_owned_active_agent_or_404(db, agent_id=agent_id, user_id=user_id)
 
     session = Session(
@@ -292,6 +433,12 @@ async def create_agent_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
+    _LOGGER.info(
+        "create_agent_session:done user_id=%s agent_id=%s session_id=%s",
+        user_id,
+        agent_id,
+        session.id,
+    )
     return _session_to_read(session)
 
 
@@ -302,6 +449,7 @@ async def list_agent_sessions(
     db: AsyncSession = Depends(get_db),
 ) -> list[SessionRead]:
     user_id = current_user["user_id"]
+    _LOGGER.info("list_agent_sessions:start user_id=%s agent_id=%s", user_id, agent_id)
     await _get_owned_active_agent_or_404(db, agent_id=agent_id, user_id=user_id)
 
     result = await db.scalars(
@@ -312,7 +460,15 @@ async def list_agent_sessions(
         )
         .order_by(Session.created_at.desc())
     )
-    return [_session_to_read(item) for item in result.all()]
+    sessions = [_session_to_read(item) for item in result.all()]
+    _LOGGER.info(
+        "list_agent_sessions:done user_id=%s agent_id=%s count=%s named=%s",
+        user_id,
+        agent_id,
+        len(sessions),
+        sum(1 for session in sessions if session.name),
+    )
+    return sessions
 
 
 @router.delete("/rooms/{room_id}/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -323,6 +479,7 @@ async def delete_session(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     user_id = current_user["user_id"]
+    _LOGGER.info("delete_session:start user_id=%s room_id=%s session_id=%s", user_id, room_id, session_id)
     await get_owned_active_room_or_404(db, room_id=room_id, user_id=user_id)
 
     session = await db.scalar(
@@ -337,6 +494,7 @@ async def delete_session(
 
     session.deleted_at = datetime.now(timezone.utc)
     await db.commit()
+    _LOGGER.info("delete_session:done user_id=%s room_id=%s session_id=%s", user_id, room_id, session_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -348,6 +506,12 @@ async def delete_agent_session(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     user_id = current_user["user_id"]
+    _LOGGER.info(
+        "delete_agent_session:start user_id=%s agent_id=%s session_id=%s",
+        user_id,
+        agent_id,
+        session_id,
+    )
     agent = await db.scalar(
         select(Agent).where(Agent.id == agent_id, Agent.deleted_at.is_(None), Agent.owner_user_id == user_id)
     )
@@ -366,6 +530,12 @@ async def delete_agent_session(
 
     session.deleted_at = datetime.now(timezone.utc)
     await db.commit()
+    _LOGGER.info(
+        "delete_agent_session:done user_id=%s agent_id=%s session_id=%s",
+        user_id,
+        agent_id,
+        session_id,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -398,7 +568,12 @@ async def get_session_messages(
             SessionMessageRead(
                 id=row.id,
                 role=row.role,
-                agent_name=row.agent_name,
+                agent_name=_canonical_display_agent_name(
+                    role=row.role,
+                    agent_name=row.agent_name,
+                    source_agent_key=row.source_agent_key,
+                    agent_key=row.agent_key,
+                ),
                 content=row.content,
                 turn_id=row.turn_id,
                 created_at=row.created_at,
@@ -445,11 +620,148 @@ async def get_session_turns(
     )
 
 
+@router.get("/sessions/{session_id}/analytics", response_model=SessionAnalyticsRead)
+async def get_session_analytics(
+    session_id: str,
+    current_user: dict[str, str] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionAnalyticsRead:
+    user_id = current_user["user_id"]
+    _LOGGER.info("session_analytics:start user_id=%s session_id=%s", user_id, session_id)
+    await _get_owned_active_session_or_404(db, session_id=session_id, user_id=user_id)
+
+    # Aggregate totals
+    totals_row = await db.execute(
+        select(
+            func.coalesce(func.sum(LlmCallEvent.credits_burned), 0).label("total_credits"),
+            func.coalesce(func.sum(LlmCallEvent.input_tokens_fresh), 0).label("total_fresh"),
+            func.coalesce(func.sum(LlmCallEvent.input_tokens_cached), 0).label("total_cached"),
+            func.coalesce(func.sum(LlmCallEvent.output_tokens), 0).label("total_output"),
+            func.coalesce(func.sum(LlmCallEvent.total_tokens), 0).label("total_tokens"),
+            func.count(LlmCallEvent.id).label("call_count"),
+        ).where(LlmCallEvent.session_id == session_id)
+    )
+    totals = totals_row.one()
+
+    # Per-model breakdown
+    model_rows = await db.execute(
+        select(
+            LlmCallEvent.model_alias,
+            func.sum(LlmCallEvent.credits_burned).label("credits"),
+            func.sum(LlmCallEvent.input_tokens_fresh).label("fresh"),
+            func.sum(LlmCallEvent.input_tokens_cached).label("cached"),
+            func.sum(LlmCallEvent.output_tokens).label("output"),
+            func.sum(LlmCallEvent.total_tokens).label("tokens"),
+            func.count(LlmCallEvent.id).label("calls"),
+        )
+        .where(LlmCallEvent.session_id == session_id)
+        .group_by(LlmCallEvent.model_alias)
+        .order_by(func.sum(LlmCallEvent.credits_burned).desc())
+    )
+
+    by_model = [
+        ModelCostRead(
+            model_alias=row.model_alias,
+            credits_burned=format_decimal(Decimal(str(row.credits))),
+            input_tokens_fresh=int(row.fresh),
+            input_tokens_cached=int(row.cached),
+            output_tokens=int(row.output),
+            total_tokens=int(row.tokens),
+            llm_call_count=int(row.calls),
+        )
+        for row in model_rows.all()
+    ]
+
+    # Per-turn breakdown (left join to get turn metadata)
+    turn_rows = await db.execute(
+        select(
+            LlmCallEvent.turn_id,
+            Turn.turn_index,
+            Turn.user_input,
+            func.sum(LlmCallEvent.credits_burned).label("credits"),
+            func.sum(LlmCallEvent.total_tokens).label("tokens"),
+            func.count(LlmCallEvent.id).label("calls"),
+        )
+        .outerjoin(Turn, LlmCallEvent.turn_id == Turn.id)
+        .where(LlmCallEvent.session_id == session_id)
+        .group_by(LlmCallEvent.turn_id, Turn.turn_index, Turn.user_input)
+        .order_by(
+            case((Turn.turn_index.is_(None), 1), else_=0).asc(),
+            Turn.turn_index.asc(),
+        )
+    )
+
+    by_turn: list[TurnCostRead] = []
+    highest_cost_turn: TurnCostRead | None = None
+    highest_credits = Decimal("0")
+
+    for row in turn_rows.all():
+        credits_dec = Decimal(str(row.credits))
+        preview = (row.user_input[:80] + "…") if row.user_input and len(row.user_input) > 80 else row.user_input
+        turn_cost = TurnCostRead(
+            turn_id=row.turn_id,
+            turn_index=row.turn_index,
+            user_input_preview=preview,
+            credits_burned=format_decimal(credits_dec),
+            total_tokens=int(row.tokens),
+            llm_call_count=int(row.calls),
+        )
+        by_turn.append(turn_cost)
+        if credits_dec > highest_credits:
+            highest_credits = credits_dec
+            highest_cost_turn = turn_cost
+
+    _LOGGER.info(
+        "session_analytics:done session_id=%s calls=%s total_credits=%s by_model=%s by_turn=%s",
+        session_id,
+        int(totals.call_count),
+        format_decimal(Decimal(str(totals.total_credits))),
+        len(by_model),
+        len(by_turn),
+    )
+
+    return SessionAnalyticsRead(
+        session_id=session_id,
+        total_credits_burned=format_decimal(Decimal(str(totals.total_credits))),
+        total_input_tokens_fresh=int(totals.total_fresh),
+        total_input_tokens_cached=int(totals.total_cached),
+        total_output_tokens=int(totals.total_output),
+        total_tokens=int(totals.total_tokens),
+        llm_call_count=int(totals.call_count),
+        highest_cost_turn=highest_cost_turn,
+        by_model=by_model,
+        by_turn=by_turn,
+    )
+
+
+@router.patch("/sessions/{session_id}", response_model=SessionRead)
+async def update_session(
+    session_id: str,
+    payload: SessionUpdateRequest,
+    current_user: dict[str, str] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionRead:
+    user_id = current_user["user_id"]
+    _LOGGER.info("update_session:start user_id=%s session_id=%s", user_id, session_id)
+    session = await _get_owned_active_session_or_404(db, session_id=session_id, user_id=user_id)
+    session.name = payload.name.strip()
+    await db.commit()
+    await db.refresh(session)
+    _LOGGER.info(
+        "update_session:done user_id=%s session_id=%s new_name=%r",
+        user_id,
+        session_id,
+        session.name,
+    )
+    return SessionRead.model_validate(session, from_attributes=True)
+
+
 @router.post("/sessions/{session_id}/turns", response_model=TurnRead, status_code=status.HTTP_201_CREATED)
 async def create_turn(
     session_id: str,
     payload: TurnCreateRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: dict[str, str] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     mode_executor: TurnExecutor = Depends(get_mode_executor),
@@ -458,6 +770,12 @@ async def create_turn(
     wallet_service: WalletService = Depends(get_wallet_service),
 ) -> TurnRead:
     user_id = current_user["user_id"]
+    _LOGGER.info(
+        "create_turn:start user_id=%s session_id=%s message=%r",
+        user_id,
+        session_id,
+        _safe_preview(payload.message),
+    )
     settings = get_settings()
     await check_turn_rate_limit(user_id, getattr(request.app.state, "arq_redis", None), settings)
     session, room, standalone_agent = await _get_owned_active_session_or_404(
@@ -483,9 +801,19 @@ async def create_turn(
             )
         ).all()
         manual_tag_selected_agents: list[RoomAgent] = []
-        tagged_keys = _extract_tagged_agent_keys(payload.message)
-        by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
-        manual_tag_selected_agents = [by_key[key] for key in tagged_keys if key in by_key]
+        message_tagged_keys = _extract_tagged_agent_keys(payload.message)
+        tagged_keys = payload.tagged_agent_keys or message_tagged_keys
+        manual_tag_selected_agents, unmatched_tags = _resolve_tagged_room_agents(room_agents, tagged_keys)
+        _LOGGER.info(
+            "create_turn:room_resolution session_id=%s room_mode=%s tagged_keys=%s message_tagged_keys=%s room_agents=%s matched=%s unmatched=%s",
+            session.id,
+            room.current_mode,
+            tagged_keys,
+            message_tagged_keys,
+            [assignment.agent.agent_key for assignment in room_agents],
+            [assignment.agent.agent_key for assignment in manual_tag_selected_agents],
+            unmatched_tags,
+        )
 
         turn_mode = room.current_mode
 
@@ -498,6 +826,12 @@ async def create_turn(
             selected_assignments = manual_tag_selected_agents
         elif room.current_mode in {"manual", "tag"}:
             if not tagged_keys:
+                _LOGGER.warning(
+                    "create_turn:manual_no_tags session_id=%s room_id=%s message=%r",
+                    session.id,
+                    room.id,
+                    _safe_preview(payload.message),
+                )
                 raise HTTPException(
                     status_code=422,
                     detail={
@@ -505,6 +839,14 @@ async def create_turn(
                         "message": "Manual mode requires at least one tagged agent (e.g., @writer).",
                     },
                 )
+            _LOGGER.warning(
+                "create_turn:manual_tags_not_matched session_id=%s room_id=%s tagged_keys=%s unmatched_tags=%s available_keys=%s",
+                session.id,
+                room.id,
+                tagged_keys,
+                unmatched_tags,
+                [assignment.agent.agent_key for assignment in room_agents],
+            )
             raise HTTPException(
                 status_code=422,
                 detail={
@@ -545,6 +887,13 @@ async def create_turn(
         active_agent = _standalone_agent_to_selected_agent(standalone_agent)
         selected_agents = [active_agent]
         turn_mode = "standalone"
+
+    _LOGGER.info(
+        "create_turn:resolved session_id=%s mode=%s selected_agents=%s",
+        session.id,
+        turn_mode,
+        [agent.agent_key for agent in selected_agents],
+    )
 
     if get_enforcement_enabled(settings.credit_enforcement_enabled):
         wallet = await wallet_service.get_or_create_wallet(db, user_id=user_id)
@@ -710,7 +1059,7 @@ async def create_turn(
             else (state.assistant_entries[0][1] if state.assistant_entries else "")
         )
     if state.final_synthesis:
-        synthesis_block = f"Manager synthesis:\n{state.final_synthesis}"
+        synthesis_block = f"Director synthesis:\n{state.final_synthesis}"
         assistant_output_text = (
             f"{assistant_output_text}\n\n---\n\n{synthesis_block}" if assistant_output_text else synthesis_block
         )
@@ -801,9 +1150,9 @@ async def create_turn(
                 session_id=session.id,
                 role="assistant",
                 visibility="shared",
-                agent_key="manager",
-                source_agent_key="manager",
-                agent_name="Manager",
+                agent_key="director",
+                source_agent_key="director",
+                agent_name="Director",
                 mode=turn_mode,
                 content=state.final_synthesis,
             )
@@ -916,6 +1265,11 @@ async def create_turn(
         ) from exc
     await db.refresh(turn)
 
+    if next_turn_index == 0:
+        from apps.api.app.workers.jobs.session_naming import session_naming as _session_naming
+        _LOGGER.info("create_turn:enqueue_session_naming session_id=%s", session.id)
+        background_tasks.add_task(_session_naming, {}, session.id, payload.message)
+
     if last_debit_balance is None:
         balance_after = None
         low_balance = False
@@ -947,6 +1301,7 @@ async def create_turn_stream(
     session_id: str,
     payload: TurnCreateRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: dict[str, str] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     llm_gateway: LlmGateway = Depends(get_llm_gateway),
@@ -955,6 +1310,12 @@ async def create_turn_stream(
     mode_executor: PurePythonModeExecutor = Depends(get_mode_executor),
 ) -> StreamingResponse:
     user_id = current_user["user_id"]
+    _LOGGER.info(
+        "create_turn_stream:start user_id=%s session_id=%s message=%r",
+        user_id,
+        session_id,
+        _safe_preview(payload.message),
+    )
     settings = get_settings()
     await check_turn_rate_limit(user_id, getattr(request.app.state, "arq_redis", None), settings)
     session, room, standalone_agent = await _get_owned_active_session_or_404(
@@ -980,9 +1341,19 @@ async def create_turn_stream(
             )
         ).all()
         manual_tag_selected_agents: list[RoomAgent] = []
-        tagged_keys = _extract_tagged_agent_keys(payload.message)
-        by_key = {assignment.agent.agent_key.lower(): assignment for assignment in room_agents}
-        manual_tag_selected_agents = [by_key[key] for key in tagged_keys if key in by_key]
+        message_tagged_keys = _extract_tagged_agent_keys(payload.message)
+        tagged_keys = payload.tagged_agent_keys or message_tagged_keys
+        manual_tag_selected_agents, unmatched_tags = _resolve_tagged_room_agents(room_agents, tagged_keys)
+        _LOGGER.info(
+            "create_turn_stream:room_resolution session_id=%s room_mode=%s tagged_keys=%s message_tagged_keys=%s room_agents=%s matched=%s unmatched=%s",
+            session.id,
+            room.current_mode,
+            tagged_keys,
+            message_tagged_keys,
+            [assignment.agent.agent_key for assignment in room_agents],
+            [assignment.agent.agent_key for assignment in manual_tag_selected_agents],
+            unmatched_tags,
+        )
 
         turn_mode = room.current_mode
 
@@ -997,6 +1368,12 @@ async def create_turn_stream(
             selected_assignments = manual_tag_selected_agents
         elif room.current_mode in {"manual", "tag"}:
             if not tagged_keys:
+                _LOGGER.warning(
+                    "create_turn_stream:manual_no_tags session_id=%s room_id=%s message=%r",
+                    session.id,
+                    room.id,
+                    _safe_preview(payload.message),
+                )
                 raise HTTPException(
                     status_code=422,
                     detail={
@@ -1004,6 +1381,14 @@ async def create_turn_stream(
                         "message": "Manual mode requires at least one tagged agent (e.g., @writer).",
                     },
                 )
+            _LOGGER.warning(
+                "create_turn_stream:manual_tags_not_matched session_id=%s room_id=%s tagged_keys=%s unmatched_tags=%s available_keys=%s",
+                session.id,
+                room.id,
+                tagged_keys,
+                unmatched_tags,
+                [assignment.agent.agent_key for assignment in room_agents],
+            )
             raise HTTPException(
                 status_code=422,
                 detail={
@@ -1044,6 +1429,13 @@ async def create_turn_stream(
         active_agent = _standalone_agent_to_selected_agent(standalone_agent)
         selected_agents = [active_agent]
         turn_mode = "standalone"
+
+    _LOGGER.info(
+        "create_turn_stream:resolved session_id=%s mode=%s selected_agents=%s",
+        session.id,
+        turn_mode,
+        [agent.agent_key for agent in selected_agents],
+    )
 
 
 
@@ -1226,7 +1618,7 @@ async def create_turn_stream(
                 else (state.assistant_entries[0][1] if state.assistant_entries else "")
             )
         if state.final_synthesis:
-            synthesis_block = f"Manager synthesis:\n{state.final_synthesis}"
+            synthesis_block = f"Director synthesis:\n{state.final_synthesis}"
             assistant_output_text = (
                 f"{assistant_output_text}\n\n---\n\n{synthesis_block}" if assistant_output_text else synthesis_block
             )
@@ -1306,9 +1698,9 @@ async def create_turn_stream(
                     session_id=session.id,
                     role="assistant",
                     visibility="shared",
-                    agent_key="manager",
-                    source_agent_key="manager",
-                    agent_name="Manager",
+                    agent_key="director",
+                    source_agent_key="director",
+                    agent_name="Director",
                     mode=turn_mode,
                     content=state.final_synthesis,
                     created_at=base_msg_time + timedelta(milliseconds=len(state.assistant_entries) + 1),
@@ -1395,6 +1787,11 @@ async def create_turn_stream(
 
         await db.commit()
         await db.refresh(turn)
+
+        if next_turn_index == 0:
+            from apps.api.app.workers.jobs.session_naming import session_naming as _session_naming
+            _LOGGER.info("create_turn_stream:enqueue_session_naming session_id=%s", session.id)
+            background_tasks.add_task(_session_naming, {}, session.id, payload.message)
 
         done_payload: dict[str, object] = {
             "type": "done",

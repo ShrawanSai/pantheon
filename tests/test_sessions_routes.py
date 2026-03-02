@@ -1355,5 +1355,75 @@ class SessionTurnRoutesTests(unittest.TestCase):
         self.assertIn("Writer:", body["assistant_output"])
         self.assertIn("Researcher:", body["assistant_output"])
 
+    def test_manual_mode_supports_hyphenated_agent_keys(self) -> None:
+        self.fake_gateway.calls.clear()
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Manual Hyphen Tag Room",
+            current_mode="manual",
+        )
+        self._seed_agent(
+            room_id=room_id,
+            agent_key="venture-capitalist-198e94c1",
+            model_alias="qwen",
+        )
+        session_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(session_response.status_code, 201)
+        session_id = session_response.json()["id"]
+
+        response = self.client.post(
+            f"/api/v1/sessions/{session_id}/turns",
+            json={"message": "Please decide @venture-capitalist-198e94c1"},
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(self.fake_gateway.calls), 1)
+        self.assertEqual(self.fake_gateway.calls[0].model_alias, "qwen")
+
+    def test_list_sessions_includes_session_name(self) -> None:
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Named Session Room",
+        )
+        create_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(create_response.status_code, 201)
+        session_id = create_response.json()["id"]
+
+        async def name_session() -> None:
+            async with self.session_factory() as session:
+                row = await session.get(Session, session_id)
+                assert row is not None
+                row.name = "Investor Pitch Review"
+                await session.commit()
+
+        asyncio.run(name_session())
+
+        list_response = self.client.get(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(list_response.status_code, 200)
+        payload = list_response.json()
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["name"], "Investor Pitch Review")
+
+    def test_session_analytics_empty_session_returns_zero_totals(self) -> None:
+        room_id = self._seed_room(
+            owner_user_id="primary-user",
+            owner_email="primary-user@example.com",
+            room_name="Analytics Empty Session Room",
+        )
+        create_response = self.client.post(f"/api/v1/rooms/{room_id}/sessions")
+        self.assertEqual(create_response.status_code, 201)
+        session_id = create_response.json()["id"]
+
+        analytics_response = self.client.get(f"/api/v1/sessions/{session_id}/analytics")
+        self.assertEqual(analytics_response.status_code, 200)
+        payload = analytics_response.json()
+        self.assertEqual(payload["session_id"], session_id)
+        self.assertEqual(payload["llm_call_count"], 0)
+        self.assertEqual(payload["total_credits_burned"], "0")
+        self.assertEqual(payload["by_model"], [])
+        self.assertEqual(payload["by_turn"], [])
+        self.assertIsNone(payload["highest_cost_turn"])
+
 if __name__ == "__main__":
     unittest.main()

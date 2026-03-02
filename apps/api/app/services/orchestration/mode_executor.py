@@ -128,7 +128,13 @@ class PurePythonModeExecutor:
         # Layer 1: Identity
         messages.append(GatewayMessage(
             role="system",
-            content=f"You are {agent.name}. {agent.role_prompt}",
+            content=(
+                f"You are {agent.name}. {agent.role_prompt}\n\n"
+                "Always format your responses using Markdown. Use headers (##, ###), "
+                "**bold**, *italic*, bullet lists, numbered lists, code blocks (```), "
+                "tables, and blockquotes where appropriate. Never respond with plain "
+                "unformatted text when structure would improve clarity."
+            ),
         ))
 
         # Layer 2: Behavioral contract (mode-specific rules)
@@ -159,7 +165,7 @@ class PurePythonModeExecutor:
     ) -> list[str]:
         candidates: list[str] = []
         if include_manager:
-            candidates.extend(["\nManager:", "Manager:"])
+            candidates.extend(["\nDirector:", "Director:", "\nManager:", "Manager:"])
 
         for name in other_speakers:
             if name.lower() == current_speaker.lower():
@@ -192,7 +198,10 @@ class PurePythonModeExecutor:
             rf"^\s*(?:\[{re.escape(current_speaker)}\]|{re.escape(current_speaker)})\s*:\s*",
             flags=re.IGNORECASE,
         )
-        manager_prefix = re.compile(r"^\s*(?:\[manager\]|manager)\s*:\s*", flags=re.IGNORECASE)
+        director_prefix = re.compile(
+            r"^\s*(?:\[director\]|\[manager\]|director|manager)\s*:\s*",
+            flags=re.IGNORECASE,
+        )
 
         disallowed = {name.strip().lower() for name in disallowed_speakers if name and name.strip()}
         disallowed.discard(current_speaker.strip().lower())
@@ -204,16 +213,19 @@ class PurePythonModeExecutor:
                 if cleaned_lines:
                     cleaned_lines.append("")
                 continue
-            if line == "---" or line.lower().startswith("manager synthesis"):
+            if line == "---" or line.lower().startswith("manager synthesis") or line.lower().startswith("director synthesis"):
                 break
 
             line = own_prefix.sub("", line)
             if include_manager:
-                line = manager_prefix.sub("", line)
+                line = director_prefix.sub("", line)
             lower_line = line.lower()
 
             if include_manager and (
-                lower_line.startswith("manager:")
+                lower_line.startswith("director:")
+                or lower_line.startswith("[director]")
+                or lower_line.startswith("director says:")
+                or lower_line.startswith("manager:")
                 or lower_line.startswith("[manager]")
                 or lower_line.startswith("manager says:")
             ):
@@ -554,13 +566,13 @@ class PurePythonModeExecutor:
                 instruction = routing.assignments.get(agent.agent_key, "Please provide your expertise on the user's request.")
 
                 mode_instruction = (
-                    f"You are in a meeting moderated by an Orchestrating Manager.\n"
+                    f"You are in a meeting moderated by an Orchestrating Director.\n"
                     f"The Council consists of: {council_list}.\n\n"
-                    f"The Manager has specifically called upon YOU ({agent.name}) with these instructions:\n"
+                    f"The Director has specifically called upon YOU ({agent.name}) with these instructions:\n"
                     f"'{instruction}'\n\n"
                     f"RULES:\n"
                     f"1. Stay in character as {agent.name}.\n"
-                    f"2. You are NOT the Manager. Do not moderate, summarize, or assign tasks.\n"
+                    f"2. You are NOT the Director. Do not moderate, summarize, or assign tasks.\n"
                     f"3. Respond ONLY with your own direct speech from your unique perspective.\n"
                     f"4. DO NOT include name tags like '[{agent.name}]:' or '{agent.name}:'."
                 )
@@ -646,8 +658,8 @@ class PurePythonModeExecutor:
 
         if state.specialist_outputs:
             if event_sink:
-                await event_sink("agent_start", {"agent_name": "Manager", "agent_key": "manager"})
-                await event_sink("chunk", {"delta": "---\n\nManager synthesis:\n"})
+                await event_sink("agent_start", {"agent_name": "Director", "agent_key": "director"})
+                await event_sink("chunk", {"delta": ""})
             try:
                 # Always stream synthesis if event sinks exist, as it has no tools.
                 if event_sink:

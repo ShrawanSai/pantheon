@@ -900,3 +900,174 @@ AGENT KEYS: ['writer', 'researcher']
 USER INPUT: Need factual support.
 PRIOR OUTPUTS: NO
 RAW LLM RESPONSE: {"selected_agent_keys":["researcher","writer"]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: Evaluate the idea: Uber Boats
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "venture-capitalist-198e94c1", "instruction": "Evaluate the business idea of 'Uber Boats' as a venture capitalist. Consider its viability, potential market, scalability, unique selling propositions, and potential challenges. Provide a verdict on whether it makes sense."}, {"agent_key": "financial-analyst-6b79d0d5", "instruction": "Analyze the financial aspects of 'Uber Boats'. Estimate potential revenue streams, operational costs (e.g., boat maintenance, fuel, licensing, crew salaries), potential pricing models, and overall financial feasibility. Also, consider capital investment requirements."}, {"agent_key": "market-researcher-0eeec2cd", "instruction": "Conduct market research for 'Uber Boats'. Identify potential target markets, analyze existing demand for water transportation, research competitors (both traditional and innovative), assess regulatory environments in potential launch cities, and identify potential challenges and opportunities in the market. Specifically, look into cities with significant waterways where this service could thrive."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: Evaluate the idea: Uber Boats
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: ```json
+{
+  "assignments": [
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Critically analyze the evaluations provided by the Venture Capitalist, Financial Analyst, and Market Researcher. Identify any potential optimistic biases, unaddressed risks, or areas where their conclusions might be overly generalized or not sufficiently supported by explicit evidence within their own outputs. Focus on finding flaws in their reasoning, assumptions, or any overlooked challenges in their assessments of 'Uber Boats'."
+    }
+  ]
+}
+```
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: @Devils Advocate focus more on the financials
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Focus your critique specifically on the financial aspects of the previous discussion. Identify any potential weaknesses, overestimations, or overlooked costs. Provide constructive criticism and suggest alternative financial models or considerations where appropriate."
+    },
+    {
+      "agent_key": "financial-analyst-6b79d0d5",
+      "instruction": "Provide a detailed breakdown of the financial projections and cost analysis related to the current topic. Be prepared to address any criticisms or alternative financial perspectives raised by the Devil's Advocate."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: @Devils Advocate focus more on the financials
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "venture-capitalist-198e94c1", "instruction": "Evaluate the financial analysis provided by the Financial Analyst and the criticisms from the Devil's Advocate. Provide an overall verdict on whether the 'Uber Boats' proposition makes financial sense given the information, highlighting key strengths, weaknesses, and potential for investment."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: @Devils Advocate focus more on the financials
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: ```json
+{
+  "assignments": [
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Critique the financial analysis provided by the Financial Analyst and Venture Capitalist, specifically targeting any remaining optimistic assumptions, overlooked costs, or understated risks in the revenue projections, operating costs, capital investment, break-even analysis, and overall funding strategy. Provide constructive criticism with the aim of highlighting any potential financial pitfalls not yet thoroughly addressed."
+    }
+  ]
+}
+```
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: @Devils Advocate talk about the market in Montreal
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Critique any claims about \"the market in Montreal\" with constructive criticism and supporting evidence. Since I do not have more information on what specifically it is that you want me to criticize, I will critique the general perception of Montreal as a tech hub, its growth potential, and current market challenges. Provide citations if possible."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: @market-researcher-0eeec2cd Look at similar compnaiesin india
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "market-researcher-0eeec2cd", "instruction": "Research and identify similar companies in India based on the previously discussed business idea or project. Provide an overview of their market position, target audience, and key offerings."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: Evaluate the idea: Drone Delivery of Groceries
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "venture-capitalist-198e94c1", "instruction": "Evaluate the business idea of drone delivery of groceries, considering its viability, potential for returns, and overall market sense."}, {"agent_key": "financial-analyst-6b79d0d5", "instruction": "Analyze the financial aspects, including potential costs (drones, maintenance, charging infrastructure, airspace management, insurance), pricing models, and potential profit margins for a drone delivery of groceries service."}, {"agent_key": "market-researcher-0eeec2cd", "instruction": "Research the current market for grocery delivery, the competitive landscape, consumer demand and acceptance of drone delivery, and regulatory hurdles and opportunities for drone delivery of groceries."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: Evaluate the idea: Drone Delivery of Groceries
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: ```json
+{
+  "assignments": [
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Critique the optimistic assumptions or overlooked challenges in the Venture Capitalist, Financial Analyst, and Market Researcher's assessments of drone grocery delivery. Specifically, challenge any points where risks might be understated or where the path to profitability seems overly simplified. For example, delve deeper into the *practical* regulatory hurdles beyond just 'minefield', or the true cost comparison with traditional methods beyond just 'high upfront costs'."
+    }
+  ]
+}
+```
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: evaluate uber for boats
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "venture-capitalist-198e94c1", "instruction": "Evaluate the business idea 'Uber for boats' from a venture capitalist's perspective. Consider its viability, potential market disruption, scalability, and any inherent risks or advantages."}, {"agent_key": "financial-analyst-6b79d0d5", "instruction": "Analyze the potential financial aspects of an 'Uber for boats' service. Consider revenue models, potential operating costs (maintenance, insurance, regulatory compliance), pricing strategies, and profitability forecasts."}, {"agent_key": "market-researcher-0eeec2cd", "instruction": "Conduct market research for an 'Uber for boats' concept. Identify target demographics, assess market demand, analyze competitive landscape, and identify potential geographical markets for such a service."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: evaluate uber for boats
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: ```json
+{
+  "assignments": [
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Critique the feasibility and potential pitfalls of the 'Uber for boats' concept, specifically focusing on the challenges highlighted by the prior analyses (Venture Capitalist, Financial Analyst, Market Researcher). Challenge assumptions made about market demand, profitability, and the effectiveness of proposed solutions to insurance, safety, and regulatory hurdles. Provide constructive criticism supported by potential real-world complications."
+    }
+  ]
+}
+```
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: evaluate uber for boats
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "venture-capitalist-198e94c1", "instruction": "Evaluate the business idea of 'Uber for boats' from a venture capitalist's perspective. Consider its market potential, competitive landscape, potential for disruption, scalability, and overall viability as an investment. Highlight key strengths, weaknesses, opportunities, and threats."}, {"agent_key": "financial-analyst-6b79d0d5", "instruction": "Analyze the financial aspects of an 'Uber for boats' concept. Research potential revenue models, cost structures (e.g., insurance, maintenance, platform development, marketing), potential pricing strategies, and estimate profitability given market conditions. Identify key financial risks and opportunities."}, {"agent_key": "market-researcher-0eeec2cd", "instruction": "Conduct market research for an 'Uber for boats' service. Identify the target demographic, market size, existing solutions (if any), potential demand, geographical considerations, regulatory hurdles, and unique selling propositions. Research potential customer pain points and how an 'Uber for boats' could address them."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: evaluate uber for boats
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "devils-advocate-34f32ddd", "instruction": "Provide constructive criticism concerning the Uber for boats concept, as detailed by the Venture Capitalist, Financial Analyst, and Market Researcher. Your critique should focus on identifying potential flaws, overlooked challenges, and areas where the proposed solutions might be insufficient or introduce new problems. Elaborate and explain your points with citations if possible, leveraging search if needed to substantiate claims related to industry failures, regulatory nightmares, or financial miscalculations in similar ventures."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: evaluate uber for boats
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "venture-capitalist-198e94c1",
+      "instruction": "Evaluate the 'Uber for boats' business idea, considering its viability, potential market, competitive landscape, and overall investment attractiveness. Provide a verdict on whether it makes sense."
+    },
+    {
+      "agent_key": "financial-analyst-6b79d0d5",
+      "instruction": "Analyze the financial aspects of an 'Uber for boats' concept. This includes potential revenue streams, costing (e.g., maintenance, insurance, platform development, marketing), potential profitability, and any significant financial risks."
+    },
+    {
+      "agent_key": "market-researcher-0eeec2cd",
+      "instruction": "Conduct market research for an 'Uber for boats' concept. Identify the target audience, assess market size, analyze existing competitors (if any), identify potential demand, and research any unique market challenges or opportunities in the boat rental/sharing space."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: Evaluate the idea: Drone Delivery of Groceries
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "venture-capitalist-198e94c1", "instruction": "Evaluate the viability and potential return on investment of a drone delivery service for groceries, considering market trends, operational challenges, and competitive landscape."}, {"agent_key": "financial-analyst-6b79d0d5", "instruction": "Analyze the potential costs associated with a drone delivery service for groceries, including drone acquisition, maintenance, charging infrastructure, regulatory compliance, and personnel. Also, estimate potential revenue streams and profitability."}, {"agent_key": "market-researcher-0eeec2cd", "instruction": "Conduct market research on the demand for drone grocery delivery, identifying target demographics, potential market size, existing competitors or substitutes, and customer willingness to pay for such a service."}, {"agent_key": "devils-advocate-34f32ddd", "instruction": "Provide constructive criticism on the idea of drone delivery of groceries. Focus on potential risks, limitations, ethical concerns, regulatory hurdles, and unforeseen challenges that could hinder its success."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: Evaluate the idea: Drone Delivery of Groceries
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "venture-capitalist-198e94c1", "instruction": "Evaluate the business idea of drone delivery of groceries from a venture capitalist's perspective, considering its viability, scalability, potential market disruption, and investment attractiveness. Provide a verdict on whether this proposition makes sense."}, {"agent_key": "financial-analyst-6b79d0d5", "instruction": "Analyze the financial aspects of drone delivery of groceries, including potential costs (drone acquisition, maintenance, operational staff, regulatory compliance), potential revenue streams, and a high-level cost-benefit analysis of implementing such a service."}, {"agent_key": "market-researcher-0eeec2cd", "instruction": "Conduct market research on the drone delivery of groceries idea. Identify the target market, potential market size, existing competitors or substitutes, consumer acceptance, and any key market trends, challenges, and opportunities."}, {"agent_key": "devils-advocate-34f32ddd", "instruction": "Provide constructive criticism on the idea of drone delivery of groceries. Focus on potential challenges, risks, drawbacks, regulatory hurdles, public perception issues, and logistical complexities that might impede its success."
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: Evaluate the idea: Drone Delivery of Groceries
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "financial-analyst-6b79d0d5", "instruction": "Analyze the potential costs associated with setting up and operating a drone delivery service for groceries, including infrastructure, drone acquisition and maintenance, regulatory compliance, and labor. Project potential revenue streams and evaluate the unit economics of drone delivery versus traditional methods."}, {"agent_key": "market-researcher-0eeec2cd", "instruction": "Conduct market research to identify the target demographic for drone grocery delivery, assess consumer willingness to adopt such a service (considering factors like convenience, cost, and privacy concerns), and identify potential competitive advantages and disadvantages compared to existing grocery delivery services and traditional retail. Also, research the current landscape of drone delivery services globally, noting any successful case studies or major hurdles encountered by other companies."}, {"agent_key": "devils-advocate-34f32ddd", "instruction": "Critique the feasibility and potential drawbacks of drone delivery for groceries. Focus on identifying and elaborating on challenges related to operational logistics (e.g., package handling, diverse product sizes/weights, returns), regulatory hurdles beyond basic airspace (e.g., local ordinances, public acceptance), environmental impact (e.g

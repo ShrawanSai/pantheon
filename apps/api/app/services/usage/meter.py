@@ -2,13 +2,13 @@ from __future__ import annotations
 
 
 _pricing_cache: dict[str, float] = {
+    "mistral-small": 0.3,
+    "llama-4-scout": 0.5,
+    "qwen3": 0.5,
     "deepseek": 0.5,
     "gemini-flash": 0.8,
-    "gemini-pro": 1.2,
-    "gpt-4o-mini": 1.0,
-    "gpt-4o": 2.0,
-    "claude-haiku": 0.8,
-    "claude-sonnet": 1.5,
+    "gpt-oss": 1.5,
+    "gemini-pro": 2.0,
 }
 
 

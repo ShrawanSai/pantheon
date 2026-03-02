@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { Search, Plus, Landmark, Bell, Settings2, Loader2, MessageSquare, PlusCircle } from "lucide-react";
@@ -10,6 +10,7 @@ import { CreateRoomModal } from "@/components/rooms/create-room-modal";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
 import { createRoom, deleteRoom, listRooms, type RoomMode, type RoomRead } from "@/lib/api/rooms";
+import { debugError, debugLog } from "@/lib/debug";
 
 type RoomUiMode = "solo" | "team" | "auto";
 
@@ -27,7 +28,7 @@ const ROOM_MODE_LABELS: Record<RoomMode, string> = {
 const ROOM_MODE_DESCRIPTIONS: Record<RoomUiMode, string> = {
   solo: "One primary agent replies each turn, like a normal chat.",
   team: "A team of agents replies in sequence so you get multiple perspectives.",
-  auto: "A manager coordinates specialists and returns one consolidated answer."
+  auto: "A Director coordinates specialists and returns one consolidated answer."
 };
 
 function mapUiModeToApiMode(mode: RoomUiMode): RoomMode {
@@ -67,6 +68,23 @@ export default function RoomsPage() {
 
   const roomsQuery = useQuery({ queryKey: ["rooms"], queryFn: listRooms });
 
+  useEffect(() => {
+    if (roomsQuery.data) {
+      debugLog("rooms-page", "list_success", {
+        count: roomsQuery.data.length,
+      });
+    }
+  }, [roomsQuery.data]);
+
+  useEffect(() => {
+    if (!roomsQuery.isError) {
+      return;
+    }
+    debugError("rooms-page", "list_failed", {
+      error: roomsQuery.error,
+    });
+  }, [roomsQuery.error, roomsQuery.isError]);
+
   const sortedRooms = useMemo(() => {
     let list = [...(roomsQuery.data || [])].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
     if (searchQuery.trim()) {
@@ -85,21 +103,36 @@ export default function RoomsPage() {
       if (!trimmedName) throw new ApiError(422, "Room name is required.");
       return createRoom({ name: trimmedName, current_mode: mapUiModeToApiMode(form.uiMode) });
     },
+    onMutate: () => {
+      debugLog("rooms-page", "create_start", {
+        name: form.name,
+        uiMode: form.uiMode,
+      });
+    },
     onSuccess: () => {
+      debugLog("rooms-page", "create_success");
       setCreateOpen(false);
       setForm({ name: "", uiMode: "solo" });
       queryClient.invalidateQueries({ queryKey: ["rooms"] });
     },
     onError: (error) => {
+      debugError("rooms-page", "create_failed", { error });
       setFormError(error instanceof ApiError ? error.detail : "Failed to create room.");
     }
   });
 
   const deleteRoomMutation = useMutation({
     mutationFn: (roomId: string) => deleteRoom(roomId),
+    onMutate: (roomId) => {
+      debugLog("rooms-page", "delete_start", { roomId });
+    },
     onSuccess: () => {
+      debugLog("rooms-page", "delete_success");
       setDeleteTarget(null);
       queryClient.invalidateQueries({ queryKey: ["rooms"] });
+    },
+    onError: (error) => {
+      debugError("rooms-page", "delete_failed", { error });
     }
   });
 
@@ -107,7 +140,7 @@ export default function RoomsPage() {
     <div className="flex h-full w-full flex-col bg-background overflow-hidden relative font-sans">
       {/* Header */}
       <header className="flex flex-col gap-4 px-6 md:px-10 pt-8 pb-4 bg-background z-20 sticky top-0">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between pl-14 lg:pl-0">
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center w-10 h-10 rounded-full bg-foreground text-accent">
               <Landmark className="w-5 h-5 text-background" />
@@ -271,4 +304,3 @@ export default function RoomsPage() {
     </div>
   );
 }
-

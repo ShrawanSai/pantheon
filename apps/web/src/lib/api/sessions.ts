@@ -7,6 +7,7 @@ export type SessionRead = {
   room_id: string | null;
   agent_id: string | null;
   started_by_user_id: string;
+  name: string | null;
   created_at: string;
   deleted_at: string | null;
 };
@@ -61,6 +62,7 @@ export type SessionTurnListRead = {
 export type TurnCreatePayload = {
   message: string;
   model_alias_override?: string | null;
+  tagged_agent_keys?: string[] | null;
 };
 
 export type StreamChunkEvent = {
@@ -82,7 +84,31 @@ export type StreamRoundEvent = {
   round: number;
 };
 
-export type StreamEvent = StreamChunkEvent | StreamDoneEvent | StreamRoundEvent | Record<string, unknown>;
+export type StreamToolCallEvent = {
+  type: "tool_start";
+  tool: string;
+  args?: Record<string, unknown>;
+};
+
+export type StreamToolResultEvent = {
+  type: "tool_end";
+  tool: string;
+  result?: string;
+};
+
+export type StreamAgentStartEvent = {
+  type: "agent_start";
+  agent_name: string;
+};
+
+export type StreamEvent =
+  | StreamChunkEvent
+  | StreamDoneEvent
+  | StreamRoundEvent
+  | StreamToolCallEvent
+  | StreamToolResultEvent
+  | StreamAgentStartEvent
+  | Record<string, unknown>;
 
 export type StreamTurnResult = {
   doneEvent: StreamDoneEvent | null;
@@ -109,10 +135,23 @@ async function readErrorDetail(response: Response): Promise<string> {
     const payload = await response.json();
     if (typeof payload?.detail === "string") {
       detail = payload.detail;
+    } else if (Array.isArray(payload?.detail)) {
+      const messages = payload.detail
+        .map((item: unknown) => (item && typeof item === "object" ? (item as Record<string, unknown>).msg : null))
+        .filter((msg: unknown): msg is string => typeof msg === "string" && msg.trim().length > 0);
+      if (messages.length > 0) {
+        detail = messages.join("; ");
+      }
+    } else if (payload?.detail && typeof payload.detail === "object") {
+      if (typeof payload.detail.message === "string") {
+        detail = payload.detail.message;
+      } else if (typeof payload.detail.detail === "string") {
+        detail = payload.detail.detail;
+      } else if (typeof payload.detail.code === "string") {
+        detail = payload.detail.code;
+      }
     } else if (typeof payload?.message === "string") {
       detail = payload.message;
-    } else if (payload?.detail && typeof payload.detail === "object") {
-      detail = payload.detail.detail || detail;
     }
     return detail;
   } catch {
@@ -137,6 +176,19 @@ export function createRoomSession(roomId: string): Promise<SessionRead> {
   });
 }
 
+export function renameSession(sessionId: string, name: string): Promise<SessionRead> {
+  return apiFetch<SessionRead>(`/api/v1/sessions/${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteSession(roomId: string, sessionId: string): Promise<void> {
+  await apiFetch<null>(`/api/v1/rooms/${roomId}/sessions/${sessionId}`, {
+    method: "DELETE",
+  });
+}
+
 export function listSessionMessages(sessionId: string, limit = 100, offset = 0): Promise<SessionMessageListRead> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   return apiFetch<SessionMessageListRead>(`/api/v1/sessions/${sessionId}/messages?${params.toString()}`, {
@@ -148,6 +200,46 @@ export function listSessionTurns(sessionId: string, limit = 50, offset = 0): Pro
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   return apiFetch<SessionTurnListRead>(`/api/v1/sessions/${sessionId}/turns?${params.toString()}`, {
     method: "GET"
+  });
+}
+
+// ── Session Analytics ──────────────────────────────────────────────────────
+
+export type TurnCostRead = {
+  turn_id: string | null;
+  turn_index: number | null;
+  user_input_preview: string | null;
+  credits_burned: string;
+  total_tokens: number;
+  llm_call_count: number;
+};
+
+export type ModelCostRead = {
+  model_alias: string;
+  credits_burned: string;
+  input_tokens_fresh: number;
+  input_tokens_cached: number;
+  output_tokens: number;
+  total_tokens: number;
+  llm_call_count: number;
+};
+
+export type SessionAnalyticsRead = {
+  session_id: string;
+  total_credits_burned: string;
+  total_input_tokens_fresh: number;
+  total_input_tokens_cached: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  llm_call_count: number;
+  highest_cost_turn: TurnCostRead | null;
+  by_model: ModelCostRead[];
+  by_turn: TurnCostRead[];
+};
+
+export function getSessionAnalytics(sessionId: string): Promise<SessionAnalyticsRead> {
+  return apiFetch<SessionAnalyticsRead>(`/api/v1/sessions/${sessionId}/analytics`, {
+    method: "GET",
   });
 }
 

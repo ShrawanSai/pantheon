@@ -46,6 +46,13 @@ export function createRoom(payload: RoomCreateRequest): Promise<RoomRead> {
   });
 }
 
+export function updateRoom(roomId: string, payload: { name?: string; goal?: string | null }): Promise<RoomRead> {
+  return apiFetch<RoomRead>(`/api/v1/rooms/${roomId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
 export function updateRoomMode(roomId: string, mode: RoomMode): Promise<RoomRead> {
   return apiFetch<RoomRead>(`/api/v1/rooms/${roomId}/mode`, {
     method: "PATCH",
@@ -75,5 +82,12 @@ export function assignRoomAgent(roomId: string, payload: { agent_id: string; pos
 export async function removeRoomAgent(roomId: string, agentId: string): Promise<void> {
   await apiFetch<null>(`/api/v1/rooms/${roomId}/agents/${agentId}`, {
     method: "DELETE"
+  });
+}
+
+export function reorderRoomAgents(roomId: string, agentIds: string[]): Promise<RoomAgentRead[]> {
+  return apiFetch<RoomAgentRead[]>(`/api/v1/rooms/${roomId}/agents/reorder`, {
+    method: "PATCH",
+    body: JSON.stringify({ agent_ids: agentIds }),
   });
 }

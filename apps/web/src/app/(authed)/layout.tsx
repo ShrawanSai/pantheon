@@ -8,14 +8,23 @@ import { useUIStore } from "@/lib/stores/ui-store";
 import { Sidebar } from "@/components/layout/sidebar";
 
 export default function AuthedLayout({ children }: { children: ReactNode }) {
+  const sidebarOpen = useUIStore((state) => state.sidebarOpen);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
       <Sidebar />
+      {/* Mobile backdrop — closes sidebar when tapping outside */}
+      {sidebarOpen && (
+        <div
+          className="lg:hidden fixed inset-0 z-40 bg-black/40"
+          onClick={toggleSidebar}
+          aria-hidden="true"
+        />
+      )}
       <div className="flex flex-1 flex-col overflow-hidden relative">
-        {/* Mobile Header overlay toggle */}
-        <div className="lg:hidden absolute top-4 left-4 z-40">
+        {/* Mobile hamburger toggle */}
+        <div className="lg:hidden absolute top-4 left-4 z-30">
           <Button
             type="button"
             variant="ghost"

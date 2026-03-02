@@ -22,7 +22,7 @@ type CreateRoomFormState = {
 const ROOM_MODE_DESCRIPTIONS: Record<RoomUiMode, string> = {
     solo: "One primary agent replies each turn, like a normal chat.",
     team: "A team of agents replies in sequence so you get multiple perspectives.",
-    auto: "A manager coordinates specialists and returns one consolidated answer."
+    auto: "A Director coordinates specialists and returns one consolidated answer."
 };
 
 function mapUiModeToApiMode(mode: RoomUiMode): RoomMode {
@@ -85,7 +85,8 @@ export function CreateRoomModal({ open, onClose }: { open: boolean; onClose: () 
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["rooms"] });
-            handleClose();
+            resetForm();
+            onClose();
         },
         onError: (error) => {
             setFormError(error instanceof ApiError ? error.detail : "Failed to create room.");
@@ -163,7 +164,7 @@ export function CreateRoomModal({ open, onClose }: { open: boolean; onClose: () 
                                 >
                                     <option value="solo">Manual / Solo (Tag agents to reply)</option>
                                     <option value="team">Team Discussion (Sequential replies)</option>
-                                    <option value="auto">Auto-Pilot (Manager coordinates)</option>
+                                    <option value="auto">Auto-Pilot (Director coordinates)</option>
                                 </select>
                             </div>
                             <p className="text-xs text-muted mt-1 leading-relaxed">{ROOM_MODE_DESCRIPTIONS[form.uiMode]}</p>
