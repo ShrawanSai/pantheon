@@ -111,9 +111,10 @@ class OpenAICompatibleGateway:
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     async def generate(self, request: GatewayRequest) -> GatewayResponse:
-        model_id = request.model_alias
-        if request.model_alias in SUPPORTED_LLMS:
-            model_id = SUPPORTED_LLMS[request.model_alias].model_id
+        if request.model_alias not in SUPPORTED_LLMS:
+            supported = ", ".join(sorted(SUPPORTED_LLMS.keys()))
+            raise ValueError(f"Unknown model alias '{request.model_alias}'. Supported: {supported}")
+        model_id = SUPPORTED_LLMS[request.model_alias].model_id
 
         tools = [_TOOL_DEFINITIONS[t] for t in request.allowed_tools if t in _TOOL_DEFINITIONS] or None
 
@@ -190,9 +191,10 @@ class OpenAICompatibleGateway:
         )
 
     async def stream(self, request: GatewayRequest) -> StreamingContext:
-        model_id = request.model_alias
-        if request.model_alias in SUPPORTED_LLMS:
-            model_id = SUPPORTED_LLMS[request.model_alias].model_id
+        if request.model_alias not in SUPPORTED_LLMS:
+            supported = ", ".join(sorted(SUPPORTED_LLMS.keys()))
+            raise ValueError(f"Unknown model alias '{request.model_alias}'. Supported: {supported}")
+        model_id = SUPPORTED_LLMS[request.model_alias].model_id
 
         usage_future: asyncio.Future[GatewayUsage] = asyncio.get_running_loop().create_future()
         provider_model_future: asyncio.Future[str] = asyncio.get_running_loop().create_future()

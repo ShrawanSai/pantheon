@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { MoreVertical, Paperclip, Send, ThumbsUp, CornerDownLeft, ArrowLeft, X, FileText, Zap, ChevronDown } from "lucide-react";
+import { MoreVertical, Paperclip, Send, ThumbsUp, CornerDownLeft, ArrowLeft, X, FileText, Zap, ChevronDown, Loader2, Plus } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -13,10 +13,8 @@ import { SessionDrawer } from "@/components/rooms/session-drawer";
 import { listAgents, type AgentRead } from "@/lib/api/agents";
 import { ApiError } from "@/lib/api/client";
 import {
-  assignRoomAgent,
   getRoom,
   listRoomAgents,
-  removeRoomAgent,
   updateRoomMode,
   type RoomAgentRead,
   type RoomMode
@@ -24,9 +22,9 @@ import {
 import {
   listRoomSessions,
   listSessionMessages,
+  createRoomSession,
   submitTurn,
   submitTurnStream,
-  type SessionRead,
   type StreamEvent
 } from "@/lib/api/sessions";
 import { debugError, debugLog, debugWarn } from "@/lib/debug";
@@ -75,6 +73,102 @@ function agentHue(name: string): number {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return Math.abs(hash) % 360;
+}
+
+const AGENT_ERROR_RE = /\[\[agent_error\]\]\s*type=(\S+)\s*message=([\s\S]*)/;
+
+function AgentErrorCard({ content }: { content: string }) {
+  // Strip optional "AgentName: " prefix before [[agent_error]]
+  const withoutPrefix = content.replace(/^[^[]+(?=\[\[agent_error\]\])/, "").trim();
+  const match = withoutPrefix.match(AGENT_ERROR_RE);
+  const errorType = match?.[1] ?? "Error";
+  const errorMessage = match?.[2]?.trim() ?? content;
+  // Extract a human-readable summary from OpenRouter 400 messages
+  const innerMatch = errorMessage.match(/'message':\s*'([^']+)'/);
+  const summary = innerMatch ? innerMatch[1] : errorMessage.slice(0, 200);
+  return (
+    <div className="flex flex-col gap-1.5 rounded-xl border border-error/30 bg-error/5 p-3">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-bold uppercase tracking-wide text-error">{errorType}</span>
+      </div>
+      <p className="text-sm text-error/80 font-mono break-all">{summary}</p>
+    </div>
+  );
+}
+
+// Matches legacy "Tool Call: search({...}) -> {result_count: 5}" stored messages
+const TOOL_CALL_RE = /^Tool Call: (\w+)\((\{[\s\S]*?\})\) -> /;
+
+function LegacyToolCallCard({ content }: { content: string }) {
+  const match = content.match(TOOL_CALL_RE);
+  if (!match) return <p className="text-xs text-muted font-mono break-all">{content}</p>;
+  const [, toolName, inputRaw] = match;
+  let query = "";
+  try { query = JSON.parse(inputRaw)?.query ?? ""; } catch { /* ignore */ }
+  const label = toolName === "search" && query ? `🔍 ${query}` : `🔧 ${toolName}`;
+  return (
+    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border bg-elevated border-border text-muted">
+      {label}
+    </span>
+  );
+}
+
+const mdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
+  a: ({ href, children }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-accent underline underline-offset-2 decoration-accent/50 hover:decoration-accent break-all"
+    >
+      {children}
+    </a>
+  ),
+};
+
+const PROSE_CLASSES =
+  "prose prose-sm dark:prose-invert max-w-none text-foreground " +
+  "[&>p]:my-1.5 [&>ul]:my-1.5 [&>ol]:my-1.5 " +
+  "[&>h1]:text-base [&>h1]:font-bold [&>h1]:mt-3 [&>h1]:mb-1 " +
+  "[&>h2]:text-sm [&>h2]:font-bold [&>h2]:mt-2.5 [&>h2]:mb-1 " +
+  "[&>h3]:text-sm [&>h3]:font-semibold [&>h3]:mt-2 [&>h3]:mb-0.5 " +
+  "[&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_table]:text-sm " +
+  "[&_th]:border [&_th]:border-border [&_th]:bg-elevated [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_th]:text-foreground " +
+  "[&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_tr:nth-child(even)_td]:bg-elevated/40 " +
+  "[&_code]:bg-elevated [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs " +
+  "[&_pre]:bg-elevated [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto " +
+  "[&_blockquote]:border-l-2 [&_blockquote]:border-accent/40 [&_blockquote]:pl-3 [&_blockquote]:text-muted " +
+  "prose-a:text-accent prose-a:no-underline";
+
+function Markdown({ children }: { children: string }) {
+  return (
+    <div className={PROSE_CLASSES}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function MessageContent({ content }: { content: string }) {
+  if (content.startsWith("Tool Call: ")) {
+    return <LegacyToolCallCard content={content} />;
+  }
+  if (content.includes("[[agent_error]]")) {
+    const parts = content.split(/((?:[^\[]*\[\[agent_error\]\][^\n]*))/g).filter(Boolean);
+    return (
+      <div className="flex flex-col gap-2">
+        {parts.map((part, i) =>
+          part.includes("[[agent_error]]") ? (
+            <AgentErrorCard key={i} content={part} />
+          ) : part.trim() ? (
+            <Markdown key={i}>{part}</Markdown>
+          ) : null
+        )}
+      </div>
+    );
+  }
+  return <Markdown>{content}</Markdown>;
 }
 
 function formatTime(iso: string): string {
@@ -138,7 +232,10 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
   const [composerError, setComposerError] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamDraft, setStreamDraft] = useState("");
+  const streamDraftRef = useRef(""); // mirrors streamDraft for synchronous reads in event handlers
   const [streamAgentName, setStreamAgentName] = useState("");
+  // Committed responses from agents that have already finished (shown while next agent thinks)
+  const [committedAgentMessages, setCommittedAgentMessages] = useState<Array<{ agentName: string; content: string }>>([]);
   const [toolBubbles, setToolBubbles] = useState<ToolCallBubble[]>([]);
   const [managePanelOpen, setManagePanelOpen] = useState(false);
   const [costPanelOpen, setCostPanelOpen] = useState(false);
@@ -153,7 +250,7 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
   const roomQuery = useQuery({ queryKey: ["room", roomId], queryFn: () => getRoom(roomId) });
   const roomAgentsQuery = useQuery({ queryKey: ["roomAgents", roomId], queryFn: () => listRoomAgents(roomId) });
   const allAgentsQuery = useQuery({ queryKey: ["agents"], queryFn: listAgents });
-  const sessionsQuery = useQuery({ queryKey: ["roomSessions", roomId], queryFn: () => listRoomSessions(roomId), staleTime: 10_000, refetchInterval: 15_000 });
+  const sessionsQuery = useQuery({ queryKey: ["roomSessions", roomId], queryFn: () => listRoomSessions(roomId), staleTime: 3_000, refetchInterval: 5_000 });
   const messagesQuery = useQuery({
     queryKey: ["sessionMessages", selectedSessionId],
     queryFn: () => listSessionMessages(selectedSessionId),
@@ -235,6 +332,14 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
     mutationFn: async (_fileId: string) => { /* file deletion not in API yet — noop */ },
   });
 
+  const createSessionMutation = useMutation({
+    mutationFn: () => createRoomSession(roomId),
+    onSuccess: async (session) => {
+      await queryClient.invalidateQueries({ queryKey: ["roomSessions", roomId] });
+      setSelectedSessionId(session.id);
+    },
+  });
+
   // ── Send turn ──────────────────────────────────────────────────────────
   async function handleSendTurn() {
     setComposerError("");
@@ -270,10 +375,12 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
     setIsStreaming(true);
+    streamDraftRef.current = "";
     setStreamDraft("");
     setStreamAgentName("Thinking...");
     setToolBubbles([]);
     setIsFinalAnswer(false);
+    setCommittedAgentMessages([]);
 
     try {
       debugLog("turn-send", "stream_submit", {
@@ -339,11 +446,27 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
         }
 
         if (e.type === "chunk" && typeof e.delta === "string") {
-          setStreamDraft(prev => prev + e.delta);
+          streamDraftRef.current += e.delta;
+          setStreamDraft(streamDraftRef.current);
           // Mark previous agent_start bubble done once text starts flowing
           setToolBubbles(prev =>
             prev.map(b => b.kind === "agent_start" && !b.done ? { ...b, done: true } : b)
           );
+        }
+
+        if (e.type === "agent_end" && typeof e.agent_name === "string") {
+          const endedAgentName = canonicalAgentDisplayName(e.agent_name);
+          // Ensure the thinking bubble for this agent is resolved
+          setToolBubbles(prev =>
+            prev.map(b => b.kind === "agent_start" && !b.done ? { ...b, done: true } : b)
+          );
+          // Commit completed response — read from ref (synchronous, no double-invoke risk)
+          const draft = streamDraftRef.current;
+          if (draft) {
+            setCommittedAgentMessages(prev => [...prev, { agentName: endedAgentName, content: draft }]);
+          }
+          streamDraftRef.current = "";
+          setStreamDraft("");
         }
 
         if (e.type === "done") {
@@ -352,8 +475,10 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
         }
       });
       await queryClient.invalidateQueries({ queryKey: ["sessionMessages", selectedSessionId] });
-      // Refresh sessions list after first turn so auto-generated name appears
+      // Refresh sessions list immediately and again after a delay so auto-generated name appears
+      // (background naming task takes 2-5s to complete the LLM call)
       queryClient.invalidateQueries({ queryKey: ["roomSessions", roomId] });
+      setTimeout(() => queryClient.invalidateQueries({ queryKey: ["roomSessions", roomId] }), 5000);
       debugLog("turn-send", "stream_success", { roomId, sessionId: selectedSessionId });
     } catch (err) {
       const detail = err instanceof ApiError ? err.detail : "Stream failed.";
@@ -373,10 +498,12 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
     } finally {
       debugLog("turn-send", "done", { roomId, sessionId: selectedSessionId });
       setIsStreaming(false);
+      streamDraftRef.current = "";
       setStreamDraft("");
       setStreamAgentName("");
       setToolBubbles([]);
       setIsFinalAnswer(false);
+      setCommittedAgentMessages([]);
     }
   }
 
@@ -394,9 +521,18 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
     });
   }
 
-  const messages = messagesQuery.data?.messages ?? [];
+  const messages = (messagesQuery.data?.messages ?? []).filter(
+    m => m.role === "user" || (
+      m.role === "assistant" &&
+      !m.content.startsWith("Tool Call: ") &&
+      !m.content.startsWith("🔍 ")
+    )
+  );
   const sessions = sessionsQuery.data ?? [];
   const files = filesQuery.data ?? [];
+
+  // Allow creating a new session only if the current session already has at least one user message
+  const canCreateSession = sessions.length === 0 || messages.some(m => m.role === "user");
 
   useEffect(() => {
     const availableKeys = new Set(
@@ -558,11 +694,24 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
         )}
 
         {!selectedSessionId && (
-          <div className="flex h-40 items-center justify-center rounded-2xl border-2 border-dashed border-border text-center">
+          <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+            <div className="text-5xl">🏛️</div>
             <div>
-              <p className="font-semibold text-foreground">No Active Session</p>
-              <p className="text-sm text-muted mt-1">Create a new session to begin.</p>
+              <p className="font-bold text-foreground text-lg">Welcome to {roomQuery.data?.name ?? "your room"}</p>
+              <p className="text-sm text-muted mt-1">Start a session to begin talking with your agents.</p>
             </div>
+            <button
+              onClick={() => createSessionMutation.mutate()}
+              disabled={createSessionMutation.isPending}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-accent text-white text-sm font-semibold shadow-sm hover:bg-accent-hover disabled:opacity-50 transition-all active:scale-95"
+            >
+              {createSessionMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Plus className="w-4 h-4" />
+              )}
+              {createSessionMutation.isPending ? "Creating…" : "Start Session"}
+            </button>
           </div>
         )}
 
@@ -648,9 +797,7 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
                   ? "bg-gradient-to-br from-mode-auto/5 to-background border-mode-auto/30"
                   : "bg-white dark:bg-surface border-border"
                   }`}>
-                  <div className="prose prose-sm dark:prose-invert max-w-none text-foreground [&>p]:my-1.5 [&>ul]:my-1.5 [&>ol]:my-1.5 [&>h1]:text-base [&>h1]:font-bold [&>h1]:mt-3 [&>h1]:mb-1 [&>h2]:text-sm [&>h2]:font-bold [&>h2]:mt-2.5 [&>h2]:mb-1 [&>h3]:text-sm [&>h3]:font-semibold [&>h3]:mt-2 [&>h3]:mb-0.5 [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_table]:text-sm [&_th]:border [&_th]:border-border [&_th]:bg-elevated [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_th]:text-foreground [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_tr:nth-child(even)_td]:bg-elevated/40 [&_code]:bg-elevated [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_pre]:bg-elevated [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto [&_blockquote]:border-l-2 [&_blockquote]:border-accent/40 [&_blockquote]:pl-3 [&_blockquote]:text-muted">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-                  </div>
+                  <MessageContent content={message.content} />
 
                   <div className="mt-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
@@ -706,83 +853,69 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
           );
         })}
 
+        {/* ── Committed agent responses (already done, shown while next agent thinks) ── */}
+        {isStreaming && committedAgentMessages.map((msg, idx) => (
+          <div key={`committed-${idx}`} className="flex gap-3">
+            <div
+              className="h-10 w-10 shrink-0 rounded-full flex items-center justify-center border-2 border-white dark:border-surface text-white text-xs font-bold"
+              style={{ background: `hsl(${agentHue(msg.agentName)},55%,50%)` }}
+            >
+              {initials(msg.agentName)}
+            </div>
+            <div className="flex flex-col items-start max-w-[88%] gap-1.5">
+              <span className="text-sm font-bold text-foreground">{msg.agentName}</span>
+              <div className="rounded-2xl rounded-tl-sm p-4 border shadow-sm w-full bg-white dark:bg-surface border-border">
+                <Markdown>{msg.content}</Markdown>
+              </div>
+            </div>
+          </div>
+        ))}
+
         {/* ── Streaming area ─────────────────────────────────────────── */}
         {isStreaming && (
-          <div className="flex flex-col gap-2">
-            {/* Tool call / event bubbles */}
-            {toolBubbles.map(bubble => (
-              <div key={bubble.id} className="flex flex-col items-center gap-1.5">
-                <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${bubble.done
-                  ? "bg-elevated border-border text-muted opacity-70"
-                  : "bg-accent/5 border-accent/30 text-accent animate-pulse"
-                  }`}>
-                  {bubble.label}
-                </span>
-                {/* Clickable source links from web search */}
-                {bubble.done && bubble.sources && bubble.sources.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 justify-center max-w-lg">
-                    {bubble.sources.slice(0, 5).map((src, i) => (
-                      <a
-                        key={i}
-                        href={src.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title={src.snippet}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-elevated border border-border text-[11px] text-muted hover:text-accent hover:border-accent transition-colors max-w-[180px]"
-                      >
-                        <span className="truncate">{src.title || src.url}</span>
-                        <span className="shrink-0 opacity-50">↗</span>
-                      </a>
-                    ))}
+          <div className="flex gap-3">
+            {/* Avatar */}
+            <div
+              className="h-10 w-10 shrink-0 rounded-full flex items-center justify-center border-2 border-white dark:border-surface text-white text-xs font-bold"
+              style={{ background: streamAgentName && streamAgentName !== "Thinking..." ? `hsl(${agentHue(streamAgentName)},55%,50%)` : "hsl(var(--accent))" }}
+            >
+              {streamAgentName && streamAgentName !== "Thinking..." ? initials(streamAgentName) : "AI"}
+            </div>
+
+            <div className="flex flex-col items-start max-w-[88%] gap-1.5">
+              {/* Agent name */}
+              {streamAgentName && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-foreground">{streamAgentName}</span>
+                  {currentMode === "orchestrator" && isFinalAnswer && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-mode-auto/10 text-mode-auto uppercase tracking-wide">
+                      Final Answer
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Content bubble: streaming text or thinking dots */}
+              <div className={`rounded-2xl rounded-tl-sm p-4 border shadow-sm w-full ${isFinalAnswer
+                ? "bg-gradient-to-br from-mode-auto/5 to-background border-mode-auto/30"
+                : "bg-white dark:bg-surface border-border"
+              }`}>
+                {streamDraft ? (
+                  <Markdown>{streamDraft}</Markdown>
+                ) : (
+                  <div className="flex items-center gap-2 text-muted text-sm">
+                    <div className="flex gap-1">
+                      <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                    <span className="text-xs font-mono">
+                      {toolBubbles.length > 0 ? "Processing…" : currentMode === "orchestrator" ? "Synthesizer drafting…" : "Responding…"}
+                    </span>
                   </div>
                 )}
               </div>
-            ))}
-
-            {/* Streaming text bubble */}
-            {(streamDraft || (!streamDraft && toolBubbles.length === 0)) && (
-              <div className="flex gap-3">
-                <div
-                  className="h-10 w-10 shrink-0 rounded-full flex items-center justify-center border-2 border-white dark:border-surface text-white text-xs font-bold"
-                  style={{ background: streamAgentName && streamAgentName !== "Thinking..." ? `hsl(${agentHue(streamAgentName)},55%,50%)` : "hsl(var(--accent))" }}
-                >
-                  {streamAgentName && streamAgentName !== "Thinking..." ? initials(streamAgentName) : "AI"}
-                </div>
-                <div className="flex flex-col items-start max-w-[88%]">
-                  {streamAgentName && (
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className="text-sm font-bold text-foreground">{streamAgentName}</span>
-                      {currentMode === "orchestrator" && isFinalAnswer && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-mode-auto/10 text-mode-auto uppercase tracking-wide">
-                          Final Answer
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  <div className={`rounded-2xl rounded-tl-sm p-4 border shadow-sm w-full ${isFinalAnswer
-                    ? "bg-gradient-to-br from-mode-auto/5 to-background border-mode-auto/30"
-                    : "bg-white dark:bg-surface border-border"
-                    }`}>
-                    {streamDraft ? (
-                      <div className="prose prose-sm dark:prose-invert max-w-none text-foreground [&>p]:my-1.5 [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_table]:text-sm [&_th]:border [&_th]:border-border [&_th]:bg-elevated [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_tr:nth-child(even)_td]:bg-elevated/40 [&_code]:bg-elevated [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamDraft}</ReactMarkdown>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 text-muted text-sm">
-                        <div className="flex gap-1">
-                          <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "0ms" }} />
-                          <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "150ms" }} />
-                          <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "300ms" }} />
-                        </div>
-                        <span className="text-xs font-mono">
-                          {currentMode === "orchestrator" ? "Synthesizer drafting…" : "Responding…"}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
+            </div>
           </div>
         )}
 
@@ -795,6 +928,39 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
 
       {/* ── Input Area ──────────────────────────────────────────────────── */}
       <footer className="flex-none bg-white dark:bg-surface border-t border-border px-4 pt-3 pb-4">
+        {/* Live agent status strip — visible above input while streaming */}
+        {isStreaming && toolBubbles.length > 0 && (
+          <div className="mb-3 flex flex-col gap-1">
+            {toolBubbles.map(bubble => (
+              <div key={bubble.id} className="flex flex-col gap-1">
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border self-start transition-all ${bubble.done
+                  ? "bg-elevated border-border text-muted opacity-60"
+                  : "bg-accent/5 border-accent/30 text-accent animate-pulse"
+                }`}>
+                  {bubble.label}
+                </span>
+                {bubble.done && bubble.sources && bubble.sources.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 ml-1">
+                    {bubble.sources.slice(0, 5).map((src, i) => (
+                      <a
+                        key={i}
+                        href={src.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={src.snippet}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-elevated border border-border text-[11px] text-muted hover:text-accent hover:border-accent transition-colors max-w-[200px]"
+                      >
+                        <span className="truncate">{src.title || src.url}</span>
+                        <span className="shrink-0 opacity-50">↗</span>
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Attached files */}
         {files.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
@@ -908,7 +1074,10 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
             disabled={!selectedSessionId || isStreaming || !messageInput.trim()}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-white shadow-sm hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95"
           >
-            <Send className="w-4 h-4" />
+            {isStreaming
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <Send className="w-4 h-4" />
+            }
           </button>
         </div>
       </footer>
@@ -935,6 +1104,7 @@ export default function RoomWorkspacePage({ params }: RoomWorkspacePageProps) {
           roomId={roomId}
           sessions={sessions}
           selectedSessionId={selectedSessionId}
+          canCreate={canCreateSession}
           onSelect={setSelectedSessionId}
           onClose={() => setSessionDrawerOpen(false)}
         />

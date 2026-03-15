@@ -52,7 +52,14 @@ def make_web_search_tool_execute(
                 ToolInvocationTelemetry(
                     tool_name="search",
                     input_json=json.dumps({"query": query}),
-                    output_json=json.dumps({"result_count": len(results)}),
+                    output_json=json.dumps({
+                        "result_count": len(results),
+                        "sources": [
+                            {"title": item.title or "", "url": item.url or ""}
+                            for item in results
+                            if item.url
+                        ],
+                    }),
                     status="success",
                     latency_ms=int((time.monotonic() - started) * 1000),
                 ),

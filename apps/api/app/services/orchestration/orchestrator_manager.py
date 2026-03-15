@@ -90,21 +90,21 @@ def _build_manager_system_prompt(
         [
             "",
             "ROUTING RULES:",
-            "1. Select up to 3 best agents to handle the user's request. For each agent, provide a specific, detailed instruction on what they should contribute.",
-            "2. If the user asks for multiple perspectives, or if the task inherently applies to multiple agents, you MUST select ALL relevant agents at once in this single round.",
-            "3. DO NOT select an agent that has already provided an output in prior rounds unless they explicitly need to respond to what another agent just said.",
-            "4. Prefer running agents concurrently (selecting multiple keys at once) rather than sequencing them across multiple rounds, unless they depend on each other's output.",
+            "1. Select up to 3 best agents to handle the user's request.",
+            "2. For each agent, write a VERY SHORT instruction: 1 sentence, strictly under 15 words.",
+            "3. If the user asks for multiple perspectives, select ALL relevant agents in one shot.",
+            "4. Do NOT re-select agents that already have outputs in prior rounds unless required.",
+            "5. Prefer concurrent selection (multiple agents at once) over sequencing across rounds.",
             "",
-            "Respond ONLY with valid JSON in exactly this format:",
+            "Respond ONLY with valid JSON — no prose, no markdown fences:",
             '{',
             '  "assignments": [',
-            '    {"agent_key": "<key1>", "instruction": "Provide a technical overview of..."},',
-            '    {"agent_key": "<key2>", "instruction": "Analyze the security implications of..."}',
+            '    {"agent_key": "<key1>", "instruction": "Focus on technical aspects."},',
+            '    {"agent_key": "<key2>", "instruction": "Critique from a risk perspective."}',
             '  ]',
             '}',
             "",
-            "CRITICAL: `assignments` MUST be a JSON array of objects with `agent_key` and `instruction`.",
-            "Do not include any other text, explanation, or markdown.",
+            "IMPORTANT: Keep each instruction under 15 words. Do not include any other text or markdown.",
         ]
     )
     return "\n".join(lines)
@@ -194,11 +194,11 @@ async def route_turn(
                     content=_build_manager_system_prompt(agents, prior_round_outputs=prior_round_outputs),
                 ),
                 GatewayMessage(
-                    role="user", 
+                    role="user",
                     content=f"User Request: {user_input}\n\nCRITICAL: If the user asks for multiple perspectives, return an array containing ALL relevant agent keys. Do not just return one."
                 ),
             ],
-            max_output_tokens=256,
+            max_output_tokens=8192,
         )
     )
 

@@ -14,14 +14,14 @@ type AgentDetailPageProps = {
   params: { agentId: string };
 };
 
-const MODEL_OPTIONS: Array<{ value: string; label: string; description: string; badge?: string }> = [
-  { value: "gemini-flash", label: "Gemini 2.5 Flash", description: "Google's fast, capable model. Great for most tasks.", badge: "Popular" },
-  { value: "gemini-pro", label: "Gemini 2.5 Pro", description: "Google's most powerful model. Best for complex reasoning.", badge: "Best" },
-  { value: "deepseek", label: "DeepSeek V3", description: "DeepSeek's latest chat model. Strong at coding and reasoning." },
-  { value: "qwen3", label: "Qwen3 235B", description: "Multilingual, great for analysis tasks." },
-  { value: "llama-4-scout", label: "Llama 4 Scout", description: "Meta's open-source scout model. Fast responses." },
-  { value: "gpt-oss", label: "GPT OSS 120B", description: "OpenAI-compatible open-source model. Strong at instruction following." },
-  { value: "mistral-small", label: "Mistral Small", description: "Lightweight free-tier model. Good for simple tasks." },
+const MODEL_OPTIONS: Array<{ value: string; label: string; description: string; badge?: string; supportsTools: boolean }> = [
+  { value: "gemini-flash", label: "Gemini 2.5 Flash", description: "Google's fast, capable model. Great for most tasks.", badge: "Popular", supportsTools: true },
+  { value: "gemini-pro", label: "Gemini 2.5 Pro", description: "Google's most powerful model. Best for complex reasoning.", badge: "Best", supportsTools: true },
+  { value: "deepseek", label: "DeepSeek V3", description: "DeepSeek's latest chat model. Strong at coding and reasoning.", supportsTools: true },
+  { value: "qwen3", label: "Qwen3 235B", description: "Multilingual, great for analysis tasks.", supportsTools: true },
+  { value: "llama-4-scout", label: "Llama 4 Scout", description: "Meta's open-source scout model. Fast responses.", supportsTools: true },
+  { value: "gpt-oss", label: "GPT OSS 120B", description: "OpenAI-compatible open-source model. Strong at instruction following.", supportsTools: true },
+  { value: "mistral-small", label: "Mistral Small", description: "Lightweight free-tier model. Good for simple tasks. Does not support tools.", supportsTools: false },
 ];
 
 const TOOL_OPTIONS: Array<{ value: string; label: string; description: string; icon: React.ReactNode }> = [
@@ -63,6 +63,16 @@ export default function AgentDetailPage({ params }: AgentDetailPageProps) {
       setToolPermissions([...agent.tool_permissions]);
     }
   }, [agent]);
+
+  const selectedModelOption = MODEL_OPTIONS.find(m => m.value === modelAlias);
+  const modelSupportsTools = selectedModelOption?.supportsTools ?? true;
+
+  // Clear tool permissions when switching to a model that doesn't support tools
+  useEffect(() => {
+    if (!modelSupportsTools) {
+      setToolPermissions([]);
+    }
+  }, [modelAlias, modelSupportsTools]);
 
   const saveMutation = useMutation({
     mutationFn: () => {
@@ -250,32 +260,38 @@ export default function AgentDetailPage({ params }: AgentDetailPageProps) {
             <h2 className="text-base font-bold text-foreground">Tools</h2>
           </div>
           <p className="text-sm text-muted mb-4">Enable capabilities this agent can use during conversations.</p>
-          <div className="space-y-3">
-            {TOOL_OPTIONS.map(tool => {
-              const enabled = toolPermissions.includes(tool.value);
-              return (
-                <button
-                  key={tool.value}
-                  onClick={() => toggleTool(tool.value)}
-                  className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 text-left transition-all ${enabled
-                    ? "border-accent bg-accent/5"
-                    : "border-border hover:border-border-focus"
-                    }`}
-                >
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-colors ${enabled ? "bg-accent text-white" : "bg-elevated text-muted"}`}>
-                    {tool.icon}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-bold ${enabled ? "text-accent" : "text-foreground"}`}>{tool.label}</p>
-                    <p className="text-xs text-muted">{tool.description}</p>
-                  </div>
-                  <div className={`w-10 h-6 rounded-full border-2 flex items-center transition-all shrink-0 ${enabled ? "bg-accent border-accent" : "bg-elevated border-border"}`}>
-                    <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform mx-0.5 ${enabled ? "translate-x-4" : "translate-x-0"}`} />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+          {!modelSupportsTools ? (
+            <div className="p-4 bg-elevated rounded-xl border border-border text-sm text-muted">
+              <span className="font-semibold text-foreground">{selectedModelOption?.label}</span> does not support tool calling. Select a different model to enable tools.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {TOOL_OPTIONS.map(tool => {
+                const enabled = toolPermissions.includes(tool.value);
+                return (
+                  <button
+                    key={tool.value}
+                    onClick={() => toggleTool(tool.value)}
+                    className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 text-left transition-all ${enabled
+                      ? "border-accent bg-accent/5"
+                      : "border-border hover:border-border-focus"
+                      }`}
+                  >
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-colors ${enabled ? "bg-accent text-white" : "bg-elevated text-muted"}`}>
+                      {tool.icon}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-bold ${enabled ? "text-accent" : "text-foreground"}`}>{tool.label}</p>
+                      <p className="text-xs text-muted">{tool.description}</p>
+                    </div>
+                    <div className={`w-10 h-6 rounded-full border-2 flex items-center transition-all shrink-0 ${enabled ? "bg-accent border-accent" : "bg-elevated border-border"}`}>
+                      <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform mx-0.5 ${enabled ? "translate-x-4" : "translate-x-0"}`} />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         {/* Metadata */}

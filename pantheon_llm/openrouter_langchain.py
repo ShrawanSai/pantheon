@@ -19,6 +19,8 @@ class LlmSpec:
 SUPPORTED_LLMS: dict[str, LlmSpec] = {
     "mistral-small": LlmSpec(alias="mistral-small", model_id="mistralai/mistral-small-3.1-24b-instruct:free", tier="free"),
     "llama-4-scout": LlmSpec(alias="llama-4-scout", model_id="meta-llama/llama-4-scout", tier="economy"),
+    # Shorthand aliases
+    "llama": LlmSpec(alias="llama", model_id="meta-llama/llama-4-scout", tier="economy"),
     "qwen3": LlmSpec(alias="qwen3", model_id="qwen/qwen3-235b-a22b", tier="economy"),
     "deepseek": LlmSpec(alias="deepseek", model_id="deepseek/deepseek-chat-v3-0324", tier="economy"),
     "gemini-flash": LlmSpec(alias="gemini-flash", model_id="google/gemini-2.5-flash", tier="standard"),

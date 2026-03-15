@@ -10,6 +10,7 @@ type Props = {
   roomId: string;
   sessions: SessionRead[];
   selectedSessionId: string;
+  canCreate: boolean;
   onSelect: (sessionId: string) => void;
   onClose: () => void;
 };
@@ -217,7 +218,7 @@ function SessionItem({
   );
 }
 
-export function SessionDrawer({ roomId, sessions, selectedSessionId, onSelect, onClose }: Props) {
+export function SessionDrawer({ roomId, sessions, selectedSessionId, canCreate, onSelect, onClose }: Props) {
   const queryClient = useQueryClient();
 
   const createSessionMutation = useMutation({
@@ -312,8 +313,9 @@ export function SessionDrawer({ roomId, sessions, selectedSessionId, onSelect, o
         <div className="px-4 pt-3 pb-2">
           <button
             onClick={() => createSessionMutation.mutate()}
-            disabled={createSessionMutation.isPending}
-            className="w-full flex items-center justify-center gap-2 h-10 rounded-xl border border-dashed border-accent/50 text-accent text-sm font-medium hover:bg-accent/5 transition-colors disabled:opacity-50"
+            disabled={createSessionMutation.isPending || !canCreate}
+            title={!canCreate ? "Send at least one message before starting a new session" : undefined}
+            className="w-full flex items-center justify-center gap-2 h-10 rounded-xl border border-dashed border-accent/50 text-accent text-sm font-medium hover:bg-accent/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {createSessionMutation.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -322,6 +324,11 @@ export function SessionDrawer({ roomId, sessions, selectedSessionId, onSelect, o
             )}
             {createSessionMutation.isPending ? "Creating…" : "New Session"}
           </button>
+          {!canCreate && (
+            <p className="text-[11px] text-muted text-center mt-1.5">
+              Send a message in the current session first
+            </p>
+          )}
         </div>
 
         {/* Session list */}

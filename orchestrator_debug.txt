@@ -1071,3 +1071,249 @@ AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'marke
 USER INPUT: Evaluate the idea: Drone Delivery of Groceries
 PRIOR OUTPUTS: YES
 RAW LLM RESPONSE: {"assignments": [{"agent_key": "financial-analyst-6b79d0d5", "instruction": "Analyze the potential costs associated with setting up and operating a drone delivery service for groceries, including infrastructure, drone acquisition and maintenance, regulatory compliance, and labor. Project potential revenue streams and evaluate the unit economics of drone delivery versus traditional methods."}, {"agent_key": "market-researcher-0eeec2cd", "instruction": "Conduct market research to identify the target demographic for drone grocery delivery, assess consumer willingness to adopt such a service (considering factors like convenience, cost, and privacy concerns), and identify potential competitive advantages and disadvantages compared to existing grocery delivery services and traditional retail. Also, research the current landscape of drone delivery services globally, noting any successful case studies or major hurdles encountered by other companies."}, {"agent_key": "devils-advocate-34f32ddd", "instruction": "Critique the feasibility and potential drawbacks of drone delivery for groceries. Focus on identifying and elaborating on challenges related to operational logistics (e.g., package handling, diverse product sizes/weights, returns), regulatory hurdles beyond basic airspace (e.g., local ordinances, public acceptance), environmental impact (e.g
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: evaluate uver for boats
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "venture-capitalist-198e94c1", "instruction": "Evaluate the business idea of 'Uver for boats' from a venture capitalist's perspective. Consider the market potential, competitive landscape, unique selling proposition, potential risks, and overall viability as an investment."}, {"agent_key": "financial-analyst-6b79d0d5", "instruction": "Analyze the financial aspects of 'Uver for boats'. Investigate potential revenue models (e.g., commission, subscription, surge pricing), operational costs (e.g., maintenance, insurance, crew, regulation compliance), potential profitability, and an initial assessment of funding required."}, {"agent_key": "market-researcher-0eeec2cd", "instruction": "Conduct market research for a service like 'Uver for boats'. Identify the target audience, current pain points for boat owners and users, existing solutions (if any), market size, potential demand, and any regulatory or logistical challenges specific to the boating industry. Also, consider geographical relevance and seasonality."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['venture-capitalist-198e94c1', 'financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd']
+USER INPUT: evaluate uver for boats
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "financial-analyst-6b79d0d5", "instruction": "Evaluate the Uber for boats proposal from a financial perspective, including a detailed breakdown of potential revenue streams, cost structures (both fixed and variable), projected profitability, and key financial metrics like ROI and payback period. Also, analyze the funding requirements based on the initial assessment."}, {"agent_key": "devils-advocate-34f32ddd", "instruction": "Critically analyze the 'Uber for boats' concept, focusing on potential weaknesses in the business model, operational challenges, regulatory hurdles, and market adoption difficulties. Provide constructive criticisms with supporting arguments or potential counterpoints to the optimistic views presented by the venture capitalist and market researcher."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd', 'venture-capitalist-198e94c1']
+USER INPUT: You need to evaluate the idea of DRONES for daily delivery of grocery Use the venture capitalist to 
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "financial-analyst-6b79d0d5",
+      "instruction": "Analyze the potential costs associated with a drone-based grocery delivery service, including drone acquisition and maintenance, operational costs (e.g., charging, software, personnel), and potential cost savings compared to traditional delivery methods."
+    },
+    {
+      "agent_key": "market-researcher-0eeec2cd",
+      "instruction": "Research the current market trends, customer acceptance, and regulatory landscape for drone delivery services, specifically in the grocery sector. Identify potential target markets and competitive advantages or challenges."
+    },
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Critically evaluate the feasibility and potential drawbacks of using drones for daily grocery delivery. Consider logistical challenges, safety concerns, public perception, regulatory hurdles, and scalability issues. Provide counter-arguments to any perceived benefits."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd', 'venture-capitalist-198e94c1']
+USER INPUT: You need to evaluate the idea of DRONES for daily delivery of grocery Use the venture capitalist to 
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: ```json
+{
+  "assignments": [
+    {
+      "agent_key": "financial-analyst-6b79d0d5",
+      "instruction": "Analyze the potential financial viability, cost structure, and revenue streams for a grocery drone delivery service. Consider initial investment, operational costs, and potential pricing models based on the market research provided."
+    },
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Provide constructive criticism on the feasibility and potential drawbacks of using drones for daily grocery delivery, specifically addressing the market research findings regarding customer acceptance (trust issues, limited payload, weather dependence) and challenges (high initial investment, regulatory hurdles, public perception). Elaborate and explain with citations if possible, focusing on counterarguments to the perceived benefits."
+    },
+    {
+      "agent_key": "venture-capitalist-198e94c1",
+      "instruction": "Based on the market research, the financial analysis, and the devil's advocate's critical assessment of a drone grocery delivery service, provide a comprehensive evaluation and a final verdict on whether this proposition makes sense as a viable
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd', 'venture-capitalist-198e94c1']
+USER INPUT: You need to evaluate the idea of DRONES for daily delivery of grocery Use the venture capitalist to 
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "financial-analyst-6b79d0d5", "instruction": "Analyze the potential costs and financial viability of using drones for daily grocery delivery, including drone acquisition, maintenance, charging infrastructure, operational costs, and potential impact on delivery fees and profit margins."}, {"agent_key": "market-researcher-0eeec2cd", "instruction": "Research the current market for grocery delivery, consumer acceptance of drone delivery, potential competitors, regulatory landscape for drone operations, and the overall market size and growth potential for drone-based grocery delivery services."}, {"agent_key": "devils-advocate-34f32ddd", "instruction": "Provide constructive criticism on the idea of using drones for daily grocery delivery. Address potential challenges, risks, ethical concerns, logistical complexities, and any practical limitations that could hinder its success."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd', 'venture-capitalist-198e94c1']
+USER INPUT: You need to evaluate the idea of DRONES for daily delivery of grocery Use the venture capitalist to 
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: ```json
+{
+  "assignments": [
+    {
+      "agent_key": "financial-analyst-6b79d0d5",
+      "instruction": "Analyze the potential financial viability of a drone-based grocery delivery service. Consider initial investment costs for drones, infrastructure (charging stations, maintenance), operational costs (staffing for maintenance, regulatory compliance), potential revenue streams (delivery fees, subscription models), and a break-even analysis given the market research findings. Also, highlight any significant financial risks or opportunities."
+    },
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Provide a critical assessment of the drone-based grocery delivery idea, specifically challenging the assumptions and optimistic projections based on the provided market research. Focus on potential downsides, unaddressed challenges (e.g., public perception of noise, safety incidents, extreme weather impact, package weight limitations), and any potential overestimation of consumer acceptance or market growth which could hinder its success."
+    },
+    {
+      "agent_key": "venture-capitalist-198e94c1",
+      "instruction": "Based on the comprehensive
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd', 'venture-capitalist-198e94c1']
+USER INPUT: You need to evaluate the idea of DRONES for daily delivery of grocery Use the venture capitalist to 
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "financial-analyst-6b79d0d5",
+      "instruction": "Evaluate the financial viability of using drones for daily grocery delivery, including estimated costs for drone acquisition, maintenance, operational expenses (e.g., charging, personnel), and potential revenue streams or cost savings compared to traditional delivery methods. Also, consider the potential for economies of scale."
+    },
+    {
+      "agent_key": "market-researcher-0eeec2cd",
+      "instruction": "Research the current market landscape for drone delivery services, specifically for groceries. Identify existing competitors, potential target demographics, market size, growth projections, and any regulatory hurdles or public perception challenges that might impact adoption."
+    },
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Provide constructive criticism on the idea of using drones for daily grocery delivery. Focus on potential drawbacks such as safety concerns, public acceptance, regulatory limitations, technical challenges (e.g., payload capacity, range, weather dependency), and economic feasibility. Elaborate on each criticism with potential citations or examples
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd', 'venture-capitalist-198e94c1']
+USER INPUT: You need to evaluate the idea of DRONES for daily delivery of grocery Use the venture capitalist to 
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "financial-analyst-6b79d0d5",
+      "instruction": "Analyze the financial viability of using drones for daily grocery delivery. Consider costs associated with drone acquisition, maintenance, charging infrastructure, operational labor, insurance, and potential savings compared to traditional delivery methods."
+    },
+    {
+      "agent_key": "market-researcher-0eeec2cd",
+      "instruction": "Research the current market landscape for drone delivery services, focusing on grocery delivery. Identify existing competitors, market size, potential growth, consumer acceptance, and any regulatory hurdles or opportunities."
+    },
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Provide constructive criticism on the idea of using drones for daily grocery delivery. Highlight potential challenges such as regulatory issues, public perception, safety concerns, payload limitations, range restrictions, weather dependency, and infrastructure requirements. Support claims with citations if possible."
+    }
+  ]
+}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd', 'venture-capitalist-198e94c1']
+USER INPUT: You need to evaluate the idea of DRONES for daily delivery of grocery Use the venture capitalist to 
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "financial-analyst-6b79d0d5", "instruction": "Analyze the potential costs and financial viability of using drones for daily grocery delivery, including operational costs, initial investment, and potential revenue streams."}, {"agent_key": "devils-advocate-34f32ddd", "instruction": "Provide constructive criticism on the idea of drone grocery delivery, highlighting potential challenges, risks, and impracticalities from various angles."}, {"agent_key": "venture-capitalist-198e94c1", "instruction": "Based on the market research, financial analysis, and critical assessment, evaluate the business idea of drone grocery delivery and provide a verdict on its viability and attractiveness as an investment."}]}
+--- route_turn called ---
+NUM AGENTS: 4
+AGENT KEYS: ['financial-analyst-6b79d0d5', 'market-researcher-0eeec2cd', 'devils-advocate-34f32ddd', 'venture-capitalist-198e94c1']
+USER INPUT: You need to evaluate the idea of DRONES for daily delivery of grocery Use the venture capitalist to 
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "venture-capitalist-198e94c1", "instruction": "You have received input from the Market Researcher, Financial Analyst, and Devil's Advocate regarding the use of drones for daily grocery delivery. Synthesize all the information, including market size, consumer demand, regulatory hurdles, competitive landscape, financial projections, and identified risks. Provide a comprehensive evaluation of this business idea from a venture capitalist's perspective, giving a final verdict on its viability and potential for investment. Ensure your response addresses the strengths, weaknesses, opportunities, and threats presented by the prior agents."}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['devils-advocate-34f32ddd', 'graph-db-engineer-d125a4af']
+USER INPUT: Project idea: The Tier-N Supply Chain Agent relies on a dynamic, probabilistic Knowledge Graph (KG) 
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "devils-advocate-34f32ddd", "instruction": "Critique the argument that graph databases, specifically Neo4j, are overly complicated and overkill for the described Tier-N Supply Chain Agent project. Focus on the claim that the ETL component offers no gain, and challenge the recommendation of using BigQuery Graph alongside a relational database. Provide counter-arguments with citations if possible, emphasizing the benefits and necessity of a dedicated graph database for the proposed application."}, {"agent_key": "graph-db-engineer-d125a4af", "instruction": "As a professional Graph DB engineer with 12 years of experience, research and argue strongly in favor of using Neo4j as the best graph database solution for the Tier-N Supply Chain Agent project. Specifically address how Neo4j's property graph model, handling of uncertainty, temporal shifts, confidence scores, validity windows, hybrid ontology, and capabilities for complex topological traversals and historical 'time-travel' queries align with and optimize the project's requirements. Counter the argument that graph databases are too complicated and overkill, and explain why Neo4j is superior to a hybrid approach with BigQuery Graph for this specific application.
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['devils-advocate-34f32ddd', 'graph-db-engineer-d125a4af']
+USER INPUT: Project idea: The Tier-N Supply Chain Agent relies on a dynamic, probabilistic Knowledge Graph (KG) 
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "graph-db-engineer-d125a4af", "instruction": "You are a professional Graph DB engineer with 12 years of experience. Your job is to take the project idea and advocate for Neo4j-type graph databases, explaining why they are the best solution, especially considering the project's explicit modeling of uncertainty, temporal shifts, hybrid ontology, and the need for complex topological and 'time-travel' queries. Defend graph databases against the criticism that they are too complicated and overkill, and provide counterarguments to the suggestion of using a relational database like BigQuery Graph, emphasizing the unique advantages of a native graph database for this specific application. Use web search to back up your claims about Neo4j's capabilities and advantages."}, {"agent_key": "devils-advocate-34f32ddd", "instruction": "Critique the argument for Neo4j-type graph databases based on the user's project idea. Focus your criticism on the complexity, potential for overkill, and the significant ETL component, arguing that a hybrid approach with a relational database like BigQuery Graph would be more practical and efficient. Elaborate on every claim with explanations and citations where possible
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['devils-advocate-34f32ddd', 'graph-db-engineer-d125a4af']
+USER INPUT: Project idea: The Tier-N Supply Chain Agent relies on a dynamic, probabilistic Knowledge Graph (KG) 
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "graph-db-engineer-d125a4af", "instruction": "You are a professional Graph DB engineer with 12 years of experience. Your job is to take the project idea and advocate for Neo4j-type graph databases, explaining why they are the best fit for this dynamic, probabilistic Knowledge Graph. You need to elaborate on how Neo4j's property graph model excels at handling uncertainty, temporal shifts, confidence scores, and validity windows. Explain how its flexible structural schemas and support for complex topological traversals and 'time-travel' queries are ideal for discovering hidden sub-tier dependencies and bottlenecks. Also, address how Neo4j's capabilities integrate with the multi-modal enrichment process, AI reasoning with LLMs, and Graph-RAG architecture for provenance and trust hierarchy. Utilize the search tool to justify your points with backed information."}, {"agent_key": "devils-advocate-34f32ddd", "instruction": "As a Devil's Advocate, your only job is to provide constructive criticism to the argument that 'Don't bother with graph databases they are way too complicated and a complete overkill for our application will spend our time sorting through the ETL
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['devils-advocate-34f32ddd', 'graph-db-engineer-d125a4af']
+USER INPUT: Project idea: The Tier-N Supply Chain Agent relies on a dynamic, probabilistic Knowledge Graph (KG) 
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "graph-db-engineer-d125a4af", "instruction": "You are a professional Graph DB engineer with 12 years of experience. Your job is to advocate for Neo4j-type graph databases. Based on the project idea for the Tier-N Supply Chain Agent, explain why a native graph database like Neo4j is the best solution, addressing the specific requirements and challenges outlined in the project description. Counter the argument that graph databases are too complicated and overkill, and explain why Neo4j is superior to a hybrid relational and graph database approach, such as BigQuery Graph, for this particular application. Emphasize its strengths in handling complex topological traversals, uncertainty modeling, temporal shifts, and the integration of diverse data sources for a dynamic, probabilistic Knowledge Graph. Use evidence and examples from your professional experience and research."}]}
+--- route_turn called ---
+NUM AGENTS: 2
+AGENT KEYS: ['devils-advocate-34f32ddd', 'graph-db-engineer-d125a4af']
+USER INPUT: Project idea: The Tier-N Supply Chain Agent relies on a dynamic, probabilistic Knowledge Graph (KG) 
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {
+  "assignments": []
+}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['graph-db-engineer-d125a4af', 'devils-advocate-34f32ddd', 'tech-project-lead-fc349768']
+USER INPUT: Project idea: The Tier-N Supply Chain Agent relies on a dynamic, probabilistic Knowledge Graph (KG) 
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: ```json
+{
+  "assignments": [
+    {
+      "agent_key": "graph-db-engineer-d125a4af",
+      "instruction": "Research and explain why Neo4j-type graph databases are the best choice for the described Tier-N Supply Chain Agent project. Focus on how Neo4j's strengths align with the project's requirements for modeling uncertainty, temporal shifts, complex topological traversals, historical 'time-travel' queries, and seamless integration with AI reasoning and multi-modal enrichment. Provide a clear and well-reasoned argument, backing up claims with research and examples where possible."
+    },
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Critique the argument that graph databases are too complicated and overkill for the Tier-N Supply Chain Agent application, and that a hybrid approach like BigQuery Graph would be superior. Specifically, address concerns about ETL complexity for graph databases and elaborate on why these perceived drawbacks might not be significant or could be outweighed by the benefits of a dedicated graph solution for this specific use case. Provide constructive criticism and elaborations, citing sources if applicable."
+    
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['graph-db-engineer-d125a4af', 'devils-advocate-34f32ddd', 'tech-project-lead-fc349768']
+USER INPUT: Project idea: The Tier-N Supply Chain Agent relies on a dynamic, probabilistic Knowledge Graph (KG) 
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: ```json
+{
+  "assignments": [
+    {
+      "agent_key": "graph-db-engineer-d125a4af",
+      "instruction": "Research and explain why Neo4j-type graph databases are the best choice for the described Tier-N Supply Chain Agent project, specifically addressing how they handle dynamic, probabilistic knowledge graphs, uncertainty modeling with confidence scores and validity windows, hybrid ontologies, complex topological traversals, and integration with AI reasoning and Graph-RAG architectures. Provide backed information for your claims."
+    },
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Critique the argument: 'Don't bother with graph databases; they are way too complicated and a complete overkill for our application. We will spend our time sorting through the ETL component for no gain. Instead, go with the graph and relational database. A recommendation is BigQuery graph.' Elaborate on potential flaws in this reasoning, provide counter-arguments, and cite sources where possible."
+    },
+    {
+      "agent_key": "tech-project-lead-fc349768",
+      
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['graph-db-engineer-d125a4af', 'devils-advocate-34f32ddd', 'tech-project-lead-fc349768']
+USER INPUT: Project idea: The Tier-N Supply Chain Agent relies on a dynamic, probabilistic Knowledge Graph (KG) 
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {"assignments": [{"agent_key": "devils-advocate-34f32ddd", "instruction": "Respond with constructive criticism to the idea presented by the Graph DB Engineer, focusing on the argument that graph databases are too complicated and an overkill, recommending a graph and relational database hybrid like BigQuery Graph instead. Elaborate and explain with citations if possible."}, {"agent_key": "tech-project-lead-fc349768", "instruction": "Listen to both sides of the argument regarding graph databases for the supply chain agent project. Do your own research, then come up with a final decision or verdict, explaining why you picked it and why you did not pick the other option. Your verdict should encompass the value of using a graph database or not for the specific use case."}]}
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['graph-db-engineer-d125a4af', 'devils-advocate-34f32ddd', 'tech-project-lead-fc349768']
+USER INPUT: Project idea: The Tier-N Supply Chain Agent relies on a dynamic, probabilistic Knowledge Graph (KG) 
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Critique the project idea from the perspective that graph databases are 'way too complicated and a complete overkill,' arguing that the time spent on ETL would not yield sufficient gains. Specifically, elaborate on the complexities of implementing a graph database for this use case, potential ETL challenges, and why a hybrid relational/graph solution like BigQuery's graph capabilities might be a more pragmatic and less resource-intensive alternative, citing potential cost, complexity, and integration issues with Neo4j. Focus on the 'no gain' aspect by suggesting that the benefits touted for a native graph could be achieved with less overhead in a relational system with graph features for this specific application."
+    },
+    {
+      "agent_key": "tech-project-lead-fc349768",
+      "instruction": "Listen to the arguments presented by the Graph DB Engineer and the Devil's Advocate regarding the use of Neo4j versus BigQuery for the Tier-N Supply Chain Agent project. Conduct your own research on the capabilities of native graph databases (like Neo4j) and
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['graph-db-engineer-d125a4af', 'devils-advocate-34f32ddd', 'tech-project-lead-fc349768']
+USER INPUT: Project idea: The Tier-N Supply Chain Agent relies on a dynamic, probabilistic Knowledge Graph (KG) 
+PRIOR OUTPUTS: NO
+RAW LLM RESPONSE: ```json
+{
+  "assignments": [
+    {
+      "agent_key": "graph-db-engineer-d125a4af",
+      "instruction": "Research and explain why Neo4j (or similar native graph databases) are the best choice for this project idea, focusing on its ability to handle dynamic, probabilistic knowledge graphs, uncertainty modeling, temporal shifts, hybrid ontologies, complex topological traversals, and integration with large language models for data ingestion and enrichment. Emphasize its strengths in representing relationships, performing graph analytics, and supporting the specific features described in the project idea. Use the web search tool to back your claims."
+    },
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Address the argument that graph databases are too complicated and overkill, specifically focusing on the claim about ETL complexity and advocating for a hybrid approach using a relational database with graph capabilities, such as BigQuery Graph. Provide constructive criticism on the project idea's proposed graph database approach, identifying potential downsides, complexities, or alternative solutions. You must provide citations for any claims you make about BigQuery Graph or general database design."
+    },
+
+--- route_turn called ---
+NUM AGENTS: 3
+AGENT KEYS: ['graph-db-engineer-d125a4af', 'devils-advocate-34f32ddd', 'tech-project-lead-fc349768']
+USER INPUT: Project idea: The Tier-N Supply Chain Agent relies on a dynamic, probabilistic Knowledge Graph (KG) 
+PRIOR OUTPUTS: YES
+RAW LLM RESPONSE: {
+  "assignments": [
+    {
+      "agent_key": "devils-advocate-34f32ddd",
+      "instruction": "Critique the project idea focusing on the complexities and potential overkill of a custom, probabilistic knowledge graph with confidence scores and validity windows, especially in light of the proposed multi-modal enrichment and Graph-RAG architecture. Argue for the simplicity and established capabilities of BigQuery Graph, highlighting the potential for significant development overhead and maintenance issues with a native graph database for this specific use case, particularly regarding ETL and real-time processing of unstructured data."
+    },
+    {
+      "agent_key": "tech-project-lead-fc349768",
+      "instruction": "Listen to both the Graph DB Engineer's argument for native graph databases (Neo4j) and the Devil's Advocate's critique advocating for BigQuery Graph. Your task is to provide a final verdict based on these arguments and your own research. Your verdict must justify your choice, explaining why you picked it and why you did not pick the other option, considering the specific requirements of the 'Tier-N Supply Chain Agent' project, particularly its dynamic, probabilistic nature,

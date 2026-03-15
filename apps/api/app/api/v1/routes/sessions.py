@@ -549,7 +549,7 @@ async def get_session_messages(
 ) -> SessionMessageListRead:
     user_id = current_user["user_id"]
     session, _, _ = await _get_owned_active_session_or_404(db, session_id=session_id, user_id=user_id)
-    conditions = (Message.session_id == session.id,)
+    conditions = (Message.session_id == session.id, Message.visibility == "shared")
     total = int(await db.scalar(select(func.count(Message.id)).where(*conditions)) or 0)
     rows_list = (await db.scalars(
         select(Message)
@@ -1127,7 +1127,37 @@ async def create_turn(
                 )
             )
 
+    # Build per-agent source URL mapping from search tool calls
+    _agent_sources: dict[str, list[tuple[str, str]]] = {}
+    for trace_agent, tool_calls in state.tool_trace_entries:
+        for tool_call in tool_calls:
+            if tool_call.tool_name != "search":
+                continue
+            try:
+                out_dict = json.loads(tool_call.output_json) if tool_call.output_json else {}
+            except Exception:
+                out_dict = {}
+            for s in out_dict.get("sources", []):
+                url = s.get("url")
+                if url:
+                    _agent_sources.setdefault(trace_agent.agent_key, []).append(
+                        (s.get("title") or url, url)
+                    )
+
     for entry_agent, entry_content in state.assistant_entries:
+        content = entry_content
+        sources = _agent_sources.get(entry_agent.agent_key, [])
+        if sources:
+            seen_urls: set[str] = set()
+            unique: list[tuple[str, str]] = []
+            for title, url in sources:
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    unique.append((title, url))
+            if unique:
+                content += "\n\n---\n**Sources**\n" + "\n".join(
+                    f"- [{title}]({url})" for title, url in unique
+                )
         db.add(
             Message(
                 id=str(uuid4()),
@@ -1139,7 +1169,7 @@ async def create_turn(
                 source_agent_key=entry_agent.agent_key,
                 agent_name=entry_agent.name,
                 mode=turn_mode,
-                content=entry_content,
+                content=content,
             )
         )
     if state.final_synthesis:
@@ -1657,6 +1687,21 @@ async def create_turn_stream(
         )
         for trace_agent, tool_calls in state.tool_trace_entries:
             for tool_call in tool_calls:
+                try:
+                    in_dict = json.loads(tool_call.input_json) if tool_call.input_json else {}
+                    out_dict = json.loads(tool_call.output_json) if tool_call.output_json else {}
+                except Exception:
+                    in_dict, out_dict = {}, {}
+                if tool_call.tool_name == "search" and out_dict.get("sources"):
+                    query = in_dict.get("query", "")
+                    sources_md = "\n".join(
+                        f"- [{s['title'] or s['url']}]({s['url']})"
+                        for s in out_dict["sources"]
+                        if s.get("url")
+                    )
+                    tool_content = f"🔍 **{query}**\n{sources_md}" if sources_md else f"🔍 **{query}** _(no results)_"
+                else:
+                    tool_content = f"Tool Call: {tool_call.tool_name}({tool_call.input_json}) -> {tool_call.output_json}"
                 db.add(
                     Message(
                         id=str(uuid4()),
@@ -1668,12 +1713,42 @@ async def create_turn_stream(
                         source_agent_key=trace_agent.agent_key,
                         agent_name=trace_agent.name,
                         mode=turn_mode,
-                        content=f"Tool Call: {tool_call.tool_name}({tool_call.input_json}) -> {tool_call.output_json}",
+                        content=tool_content,
                         created_at=base_msg_time,
                     )
                 )
 
+        # Build per-agent source URL mapping from search tool calls
+        agent_sources: dict[str, list[tuple[str, str]]] = {}
+        for trace_agent, tool_calls in state.tool_trace_entries:
+            for tool_call in tool_calls:
+                if tool_call.tool_name != "search":
+                    continue
+                try:
+                    out_dict = json.loads(tool_call.output_json) if tool_call.output_json else {}
+                except Exception:
+                    out_dict = {}
+                for s in out_dict.get("sources", []):
+                    url = s.get("url")
+                    if url:
+                        agent_sources.setdefault(trace_agent.agent_key, []).append(
+                            (s.get("title") or url, url)
+                        )
+
         for i, (entry_agent, entry_content) in enumerate(state.assistant_entries, start=1):
+            content = entry_content
+            sources = agent_sources.get(entry_agent.agent_key, [])
+            if sources:
+                seen_urls: set[str] = set()
+                unique: list[tuple[str, str]] = []
+                for title, url in sources:
+                    if url not in seen_urls:
+                        seen_urls.add(url)
+                        unique.append((title, url))
+                if unique:
+                    content += "\n\n---\n**Sources**\n" + "\n".join(
+                        f"- [{title}]({url})" for title, url in unique
+                    )
             db.add(
                 Message(
                     id=str(uuid4()),
@@ -1685,7 +1760,7 @@ async def create_turn_stream(
                     source_agent_key=entry_agent.agent_key,
                     agent_name=entry_agent.name,
                     mode=turn_mode,
-                    content=entry_content,
+                    content=content,
                     created_at=base_msg_time + timedelta(milliseconds=i),
                 )
             )

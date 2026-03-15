@@ -130,10 +130,21 @@ class PurePythonModeExecutor:
             role="system",
             content=(
                 f"You are {agent.name}. {agent.role_prompt}\n\n"
-                "Always format your responses using Markdown. Use headers (##, ###), "
-                "**bold**, *italic*, bullet lists, numbered lists, code blocks (```), "
-                "tables, and blockquotes where appropriate. Never respond with plain "
-                "unformatted text when structure would improve clarity."
+                "OUTPUT RULES (strictly enforced):\n"
+                "- Write your FINAL ANSWER ONLY. Do NOT include any internal thinking, planning, reasoning steps, or scratchpad text in your response.\n"
+                "- Do NOT write headers like 'Refining my answer', 'My reasoning', 'Step 1', or any internal monologue before the actual response.\n"
+                "- Start your response immediately with the substantive content.\n\n"
+                "TOOL USAGE RULES (strictly enforced):\n"
+                "- You may call web search AT MOST 2 times total per response.\n"
+                "- After your searches are done, you MUST stop calling tools and write your final answer immediately.\n"
+                "- Never call a tool after you already have enough information to answer.\n\n"
+                "FORMATTING RULES — always follow these:\n"
+                "- Use Markdown for all responses. Use ## and ### for section headers, "
+                "**bold** for key terms, bullet lists or numbered lists for items, "
+                "tables for comparisons, and code blocks (```) for code or data.\n"
+                "- Break long responses into clearly labelled sections with headers.\n"
+                "- If you used web search, cite sources inline as [Title](URL).\n"
+                "- Never respond with a wall of plain unformatted text."
             ),
         ))
 
@@ -274,9 +285,13 @@ class PurePythonModeExecutor:
             )
             
         messages = list(base_messages)
-        loop_limit = 4
-        
+        loop_limit = 8  # up to ~4 tool call rounds + buffer for final answer
+
         try:
+            if event_sink:
+                _LOGGER.info("Sending agent_start for %s", agent.name)
+                await event_sink("agent_start", {"agent_name": agent.name, "agent_key": agent.agent_key})
+
             for _ in range(loop_limit):
                 req = GatewayRequest(
                     model_alias=agent.model_alias,
@@ -286,10 +301,6 @@ class PurePythonModeExecutor:
                     response_schema=AgentResponse,
                     stop_sequences=stop_sequences,
                 )
-                
-                if event_sink:
-                    _LOGGER.info("Sending agent_start for %s", agent.name)
-                    await event_sink("agent_start", {"agent_name": agent.name, "agent_key": agent.agent_key})
 
                 # If tools are permitted, just use generate to ensure tool_calls are cleanly extracted.
                 # If streaming is requested and no tools, use stream mode.
@@ -314,10 +325,21 @@ class PurePythonModeExecutor:
                         tool_records = self._convert_telemetry(telemetry_records)
                         if tool_records:
                             state.tool_trace_entries.append((agent, tool_records))
+                        # For tool-using agents the gateway skips structured-output parsing,
+                        # but some models still output JSON — try to extract "response" field.
+                        final_text = response.text
+                        if agent.tool_permissions and req.response_schema:
+                            try:
+                                parsed = json.loads(final_text)
+                                extracted = parsed.get("response", "").strip()
+                                if extracted:
+                                    final_text = extracted
+                            except (json.JSONDecodeError, ValueError, AttributeError):
+                                pass
                         if event_sink:
-                            await event_sink("chunk", {"delta": response.text})
+                            await event_sink("chunk", {"delta": final_text})
                             await event_sink("agent_end", {"agent_name": agent.name})
-                        return response.text, True
+                        return final_text, True
                         
                     messages.append(GatewayMessage(role="assistant", content=response.text, tool_calls=response.tool_calls))
                     
@@ -374,13 +396,17 @@ class PurePythonModeExecutor:
                     return text_out, True
                     
             text_out = "Agent iteration limit exceeded due to too many tool calls."
+            if event_sink:
+                await event_sink("chunk", {"delta": text_out})
+                await event_sink("agent_end", {"agent_name": agent.name})
             return text_out, False
-            
+
         except Exception as exc:
             _LOGGER.exception("Agent %s failed during invocation", agent.name)
             error_msg = f"[[agent_error]] type={exc.__class__.__name__} message={str(exc)}"
             if event_sink:
                 await event_sink("chunk", {"delta": f"{agent.name}: {error_msg}"})
+                await event_sink("agent_end", {"agent_name": agent.name})
             return error_msg, False
 
     def _convert_telemetry(self, telemetry: list[ToolInvocationTelemetry]) -> tuple[ToolCallRecord, ...]:
