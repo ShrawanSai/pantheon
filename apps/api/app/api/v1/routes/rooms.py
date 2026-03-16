@@ -87,7 +87,11 @@ async def create_room(
 
     existing_user = await db.get(User, user_id)
     if existing_user is None:
-        db.add(User(id=user_id, email=email))
+        try:
+            db.add(User(id=user_id, email=email))
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
 
     if payload.current_mode == "orchestrator" and (not payload.goal or not payload.goal.strip()):
         raise HTTPException(
@@ -268,15 +272,18 @@ async def reorder_room_agents(
         payload.agent_ids,
     )
 
-    for idx, agent_id in enumerate(payload.agent_ids, start=1):
-        assignment = await db.scalar(
-            select(RoomAgent).where(
-                RoomAgent.room_id == room_id,
-                RoomAgent.agent_id == agent_id,
-            )
+    # Load all assignments for this room in a single query (avoids N+1).
+    all_assignments = (
+        await db.scalars(
+            select(RoomAgent).where(RoomAgent.room_id == room_id)
         )
-        if assignment is not None:
-            assignment.position = idx
+    ).all()
+    assignments_by_agent_id = {a.agent_id: a for a in all_assignments}
+
+    # Update positions only for agents that belong to this room (validates ownership).
+    for idx, agent_id in enumerate(payload.agent_ids, start=1):
+        if agent_id in assignments_by_agent_id:
+            assignments_by_agent_id[agent_id].position = idx
 
     await db.commit()
 

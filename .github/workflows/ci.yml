@@ -12,6 +12,8 @@ jobs:
     env:
       SUPABASE_URL: https://example.supabase.co
       SUPABASE_SERVICE_ROLE_KEY: dummy-service-role-key
+      SUPABASE_ANON_KEY: dummy-anon-key
+      OPENROUTER_API_KEY: dummy-openrouter-key
       API_CORS_ALLOWED_ORIGINS: http://localhost:3000,https://pantheon-git-main-shrawan-sais-projects.vercel.app
     steps:
       - name: Checkout

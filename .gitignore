@@ -224,3 +224,10 @@ apps/web/.next/
 # Keep frontend source lib folder tracked.
 !apps/web/src/lib/
 !apps/web/src/lib/**
+
+# Local AI assistant/tooling settings (never commit)
+.claude/
+.mcp.json
+
+# Local developer data
+pantheon_dev.db

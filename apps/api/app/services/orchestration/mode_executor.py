@@ -305,11 +305,14 @@ class PurePythonModeExecutor:
                 # If tools are permitted, just use generate to ensure tool_calls are cleanly extracted.
                 # If streaming is requested and no tools, use stream mode.
                 if agent.tool_permissions or not event_sink:
-                    # Debug: Log the first message to verify separators
                     if messages:
-                         _LOGGER.info("FINAL PAYLOAD FIRST MSG: %s", messages[0].content)
-                         _LOGGER.info("FINAL PAYLOAD LAST MSG: %s", messages[-1].content)
-                    
+                        _LOGGER.debug(
+                            "invoke_agent:payload_bounds agent=%s first_len=%d last_len=%d",
+                            agent.name,
+                            len(messages[0].content),
+                            len(messages[-1].content),
+                        )
+
                     response = await self._llm_gateway.generate(req)
                     state.usage_entries.append((
                         agent.agent_id,
@@ -372,7 +375,6 @@ class PurePythonModeExecutor:
                     # Native streaming chunk delivery (no tools)
                     stream_ctx = await self._llm_gateway.stream(req)
                     output_parts = []
-                    is_first_chunk = True
                     async for delta in stream_ctx.chunks:
                         output_parts.append(delta)
                         await event_sink("chunk", {"delta": delta})
@@ -465,7 +467,7 @@ class PurePythonModeExecutor:
     ):
         user_input_lower = state.user_input.lower()
         
-        # If the user explicitly mentors @agent_key, that agent should respond first
+        # If the user explicitly mentions @agent_key, that agent should respond first
         def _sort_key(item: tuple[int, ActiveAgent]) -> tuple[int, int]:
             idx, agent = item
             mention_key = f"@{agent.agent_key.lower()}" if agent.agent_key else ""
@@ -736,7 +738,11 @@ class PurePythonModeExecutor:
                 if event_sink:
                     await event_sink("chunk", {"delta": err_msg})
 
-_cached_executor = PurePythonModeExecutor(llm_gateway=get_llm_gateway())
+_cached_executor: PurePythonModeExecutor | None = None
 
-def get_mode_executor():
+
+def get_mode_executor() -> PurePythonModeExecutor:
+    global _cached_executor
+    if _cached_executor is None:
+        _cached_executor = PurePythonModeExecutor(llm_gateway=get_llm_gateway())
     return _cached_executor

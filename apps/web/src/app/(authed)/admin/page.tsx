@@ -99,7 +99,7 @@ function UsageTab() {
                 <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "hsl(var(--muted))" }} width={55} tickFormatter={v => `$${Number(v).toFixed(3)}`} />
                 <Tooltip
                   contentStyle={{ backgroundColor: "hsl(var(--surface))", borderRadius: "8px", border: "1px solid hsl(var(--border))" }}
-                  formatter={(v: number) => [`$${Number(v).toFixed(4)}`, "Credits"]}
+                  formatter={(v: number | undefined) => [`$${Number(v ?? 0).toFixed(4)}`, "Credits"]}
                 />
                 <Line type="monotone" dataKey="credits" stroke="hsl(var(--accent))" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: "hsl(var(--accent))", stroke: "white", strokeWidth: 2 }} />
               </LineChart>
@@ -121,7 +121,7 @@ function UsageTab() {
                 <YAxis type="category" dataKey="model" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "hsl(var(--muted))" }} width={100} />
                 <Tooltip
                   contentStyle={{ backgroundColor: "hsl(var(--surface))", borderRadius: "8px", border: "1px solid hsl(var(--border))" }}
-                  formatter={(v: number) => [`$${Number(v).toFixed(4)}`, "Credits"]}
+                  formatter={(v: number | undefined) => [`$${Number(v ?? 0).toFixed(4)}`, "Credits"]}
                 />
                 <Bar dataKey="credits" fill="hsl(var(--accent))" radius={[0, 4, 4, 0]} />
               </BarChart>

@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import Header, HTTPException
 
+from apps.api.app.core.config import get_settings
 from apps.api.app.services.auth.supabase_auth import verify_supabase_bearer_token
+
+# Evaluate once at module load time — not on every request.
+# Defaults to "production" if ENVIRONMENT is unset, which disables all bypasses.
+_IS_DEVELOPMENT = os.getenv("ENVIRONMENT", "production") == "development"
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> dict[str, str]:
@@ -11,9 +18,16 @@ def get_current_user(authorization: str | None = Header(default=None)) -> dict[s
     token = authorization.split(" ", 1)[1].strip()
     if not token:
         raise HTTPException(status_code=401, detail="Missing Bearer token.")
-    import os
-    if token == "dev-override" and os.getenv("ENVIRONMENT", "local") not in ("production", "prod"):
-        return {"user_id": "test-user-id", "email": "test@example.com"}
+
+    # Dev bypass tokens are only active when ENVIRONMENT=development.
+    # In staging or production, these tokens are treated as invalid and rejected normally.
+    if _IS_DEVELOPMENT:
+        if token == "dev-override":
+            return {"user_id": "00000000-0000-0000-0000-000000000001", "email": "devtest@localhost.invalid"}
+        if token == "admin-override":
+            settings = get_settings()
+            admin_id = next(iter(settings.admin_user_ids), "00000000-0000-0000-0000-000000000001")
+            return {"user_id": admin_id, "email": "admin@localhost.invalid"}
 
     try:
         user = verify_supabase_bearer_token(token)

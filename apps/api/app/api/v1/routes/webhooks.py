@@ -26,23 +26,20 @@ async def stripe_webhook(
     payload = await request.body()
     sig_header = request.headers.get("Stripe-Signature", "")
 
-    if settings.stripe_webhook_secret:
-        try:
-            event = construct_webhook_event(
-                payload=payload,
-                sig_header=sig_header,
-                secret=settings.stripe_webhook_secret,
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="invalid stripe signature") from exc
-    else:
-        _LOGGER.warning("stripe webhook secret is not configured; signature verification skipped.")
-        try:
-            import json
-
-            event = json.loads(payload.decode("utf-8"))
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail="malformed webhook payload") from exc
+    # Signature verification is always required. An unconfigured secret means
+    # the endpoint is not ready — return 503 rather than allowing unsigned events.
+    if not settings.stripe_webhook_secret:
+        _LOGGER.error("stripe_webhook:misconfigured stripe_webhook_secret not set")
+        raise HTTPException(status_code=503, detail="Stripe webhook not configured on this server.")
+    try:
+        event = construct_webhook_event(
+            payload=payload,
+            sig_header=sig_header,
+            secret=settings.stripe_webhook_secret,
+        )
+    except Exception as exc:
+        _LOGGER.warning("stripe_webhook:bad_signature sig_header=%.60s", sig_header)
+        raise HTTPException(status_code=400, detail="invalid stripe signature") from exc
 
     event_type = event.get("type") if isinstance(event, dict) else getattr(event, "type", None)
     if event_type != "payment_intent.succeeded":

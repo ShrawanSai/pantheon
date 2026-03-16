@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.app.db.models import CreditTransaction, CreditWallet
@@ -52,19 +52,38 @@ class WalletService:
         reference_id: str | None = None,
         note: str | None = None,
     ) -> DebitResult:
-        wallet = await self.get_or_create_wallet(db, user_id=user_id)
         debit_amount = Decimal(str(max(credits_burned, 0.0)))
-        current_balance = wallet.balance if wallet.balance is not None else Decimal("0")
-        new_balance = current_balance - debit_amount
-        wallet.balance = new_balance
-        # Keep updated_at deterministic even if debit path is refactored to core UPDATE statements later.
-        wallet.updated_at = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+
+        # Atomic UPDATE avoids the read-modify-write race condition that occurs
+        # when two concurrent requests both read the same balance before either writes.
+        # RETURNING gives us the post-update balance without a second SELECT.
+        result = await db.execute(
+            update(CreditWallet)
+            .where(CreditWallet.user_id == user_id)
+            .values(
+                balance=CreditWallet.balance - debit_amount,
+                updated_at=now,
+            )
+            .returning(CreditWallet.balance, CreditWallet.id)
+        )
+        row = result.one_or_none()
+
+        if row is None:
+            # Wallet does not exist yet — create it, then apply debit on the new row.
+            wallet = await self.get_or_create_wallet(db, user_id=user_id)
+            wallet.balance = (wallet.balance or Decimal("0")) - debit_amount
+            wallet.updated_at = now
+            new_balance = wallet.balance
+            wallet_id = wallet.id
+        else:
+            new_balance, wallet_id = row
 
         transaction_id = str(uuid4())
         db.add(
             CreditTransaction(
                 id=transaction_id,
-                wallet_id=wallet.id,
+                wallet_id=wallet_id,
                 user_id=user_id,
                 amount=-debit_amount,
                 kind="debit",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import json
 from collections.abc import AsyncIterator
@@ -743,7 +744,7 @@ async def update_session(
 ) -> SessionRead:
     user_id = current_user["user_id"]
     _LOGGER.info("update_session:start user_id=%s session_id=%s", user_id, session_id)
-    session = await _get_owned_active_session_or_404(db, session_id=session_id, user_id=user_id)
+    session, _, _ = await _get_owned_active_session_or_404(db, session_id=session_id, user_id=user_id)
     session.name = payload.name.strip()
     await db.commit()
     await db.refresh(session)
@@ -816,6 +817,7 @@ async def create_turn(
         )
 
         turn_mode = room.current_mode
+        active_room_agent: RoomAgent | None = None
 
         if manual_tag_selected_agents:
             if len(manual_tag_selected_agents) > 1:
@@ -877,7 +879,13 @@ async def create_turn(
             active_room_agent = room_agents[0]
             selected_assignments = room_agents
         else:
-            selected_assignments = [active_room_agent] if active_room_agent is not None else []
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "unknown_room_mode",
+                    "message": f"Unsupported room mode: {room.current_mode}",
+                },
+            )
 
         selected_agents = [_room_agent_to_selected_agent(assignment) for assignment in selected_assignments]
         active_agent = _room_agent_to_selected_agent(active_room_agent) if active_room_agent else None
@@ -903,7 +911,15 @@ async def create_turn(
                 status_code=402,
                 detail="Insufficient credits. Please top up your account.",
             )
-    model_alias = payload.model_alias_override or (active_agent.model_alias if active_agent else "deepseek")
+    if active_agent is None and not payload.model_alias_override:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "no_active_agent",
+                "message": "No active agent resolved for this turn.",
+            },
+        )
+    model_alias = payload.model_alias_override or active_agent.model_alias
 
     history_rows = (
         await db.scalars(
@@ -1009,12 +1025,11 @@ async def create_turn(
             )).all()
             agent_tool_events[sa.agent_key] = list(reversed(events))
 
-    import typing
     state = TurnExecutionState(
         session_id=session.id,
         turn_index=next_turn_index + 1,
         user_input=payload.message,
-        room_mode=typing.cast(typing.Any, turn_mode),
+        room_mode=turn_mode,
         active_agents=selected_agents,
         primary_context_messages=[GatewayMessage(role=m.role, content=m.content) for m in primary_context.messages],
         max_output_tokens=settings.context_max_output_tokens,
@@ -1337,7 +1352,7 @@ async def create_turn_stream(
     llm_gateway: LlmGateway = Depends(get_llm_gateway),
     usage_recorder: UsageRecorder = Depends(get_usage_recorder),
     wallet_service: WalletService = Depends(get_wallet_service),
-    mode_executor: PurePythonModeExecutor = Depends(get_mode_executor),
+    mode_executor: TurnExecutor = Depends(get_mode_executor),
 ) -> StreamingResponse:
     user_id = current_user["user_id"]
     _LOGGER.info(
@@ -1386,6 +1401,7 @@ async def create_turn_stream(
         )
 
         turn_mode = room.current_mode
+        active_room_agent: RoomAgent | None = None
 
         if manual_tag_selected_agents:
             # Explicitly tagged agents bypass current mode
@@ -1449,7 +1465,13 @@ async def create_turn_stream(
             active_room_agent = room_agents[0]
             selected_assignments = room_agents
         else:
-            selected_assignments = [active_room_agent] if active_room_agent is not None else []
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "unknown_room_mode",
+                    "message": f"Unsupported room mode: {room.current_mode}",
+                },
+            )
 
         selected_agents = [_room_agent_to_selected_agent(assignment) for assignment in selected_assignments]
         active_agent = _room_agent_to_selected_agent(active_room_agent) if active_room_agent else None
@@ -1577,14 +1599,11 @@ async def create_turn_stream(
                 )).all()
                 agent_tool_events[sa.agent_key] = list(reversed(events))
 
-        import typing
-        import asyncio
-
         state = TurnExecutionState(
             session_id=session.id,
             turn_index=next_turn_index + 1,
             user_input=payload.message,
-            room_mode=typing.cast(typing.Any, turn_mode),
+            room_mode=turn_mode,
             active_agents=selected_agents,
             primary_context_messages=[GatewayMessage(role=m.role, content=m.content) for m in primary_context.messages],
             max_output_tokens=settings.context_max_output_tokens,
@@ -1601,7 +1620,8 @@ async def create_turn_stream(
             try:
                 await mode_executor.run_turn(db, state, event_sink)
             except Exception as e:
-                _LOGGER.error("Stream executor failed: %s", e)
+                _LOGGER.error("Stream executor failed: %s", e, exc_info=True)
+                await queue.put(_sse_event({"type": "error", "message": str(e)}))
             finally:
                 await queue.put(None)
                 

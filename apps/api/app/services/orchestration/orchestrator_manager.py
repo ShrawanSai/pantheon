@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, Field
 from typing import Protocol
 
-from apps.api.app.services.llm.gateway import GatewayMessage, GatewayRequest, LlmGateway
+from apps.api.app.services.llm.gateway import GatewayMessage, GatewayRequest, GatewayResponse, LlmGateway
 
 class RoutableAgent(Protocol):
     @property
@@ -166,22 +166,21 @@ async def route_turn(
         raise ValueError("route_turn requires at least one available agent.")
 
     fallback = OrchestratorRoutingDecision(selected_agent_keys=(agents[0].agent_key,))
-    
-    with open("orchestrator_debug.txt", "a", encoding="utf-8") as f:
-        f.write(f"--- route_turn called ---\n")
-        f.write(f"NUM AGENTS: {len(agents)}\n")
-        f.write(f"AGENT KEYS: {[a.agent_key for a in agents]}\n")
-        f.write(f"USER INPUT: {user_input[:100]}\n")
-        f.write(f"PRIOR OUTPUTS: {'YES' if prior_round_outputs else 'NO'}\n")
-    
+
+    _LOGGER.debug(
+        "route_turn:called num_agents=%s prior_outputs=%s user_input=%.100s",
+        len(agents),
+        bool(prior_round_outputs),
+        user_input,
+    )
+
     # Deterministic routing for explicit "all" requests on the first round
     user_lower = user_input.lower()
     if not prior_round_outputs and ("all " in user_lower) and len(agents) > 1:
-        # If the user is asking for all agents/CEOs, just return them all. 
-        # LLMs often struggle to output multiple JSON array elements even when instructed.
+        # If the user is asking for all agents, return them all without an LLM call.
+        # LLMs often struggle to output multiple JSON array elements when instructed.
         keys = tuple(a.agent_key for a in agents if a.agent_key is not None)
-        with open("orchestrator_debug.txt", "a", encoding="utf-8") as f:
-            f.write(f"DETERMINISTIC ROUTING TRIGGERED! Keys: {keys}\n")
+        _LOGGER.debug("route_turn:deterministic_all keys=%s", keys)
         if keys:
             return OrchestratorRoutingDecision(selected_agent_keys=keys)
 
@@ -203,9 +202,7 @@ async def route_turn(
     )
 
     try:
-        with open("orchestrator_debug.txt", "a", encoding="utf-8") as f:
-            f.write(f"RAW LLM RESPONSE: {response.text}\n")
-            
+        _LOGGER.debug("route_turn:raw_response response=%.500s", response.text)
         parsed = _RoutingResponse.model_validate_json(_strip_json_fences(response.text))
         
         assignments_dict: dict[str, str] = {

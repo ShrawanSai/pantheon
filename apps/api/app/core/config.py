@@ -12,10 +12,10 @@ load_dotenv()
 @dataclass(frozen=True)
 class Settings:
     supabase_url: str
-    supabase_anon_key: str | None
+    supabase_anon_key: str
     supabase_service_role_key: str
     api_cors_allowed_origins: list[str]
-    openrouter_api_key: str | None
+    openrouter_api_key: str
     openrouter_base_url: str
     context_max_output_tokens: int
     context_summary_trigger_ratio: float
@@ -42,6 +42,21 @@ class Settings:
     rate_limit_turns_per_hour: int
     orchestrator_max_depth: int
     orchestrator_max_specialist_invocations: int
+
+
+def _require_env(name: str) -> str:
+    """Return the value of a required environment variable or raise at startup.
+
+    This enforces a fail-fast contract: the app refuses to start rather than
+    silently operating with missing credentials.
+    """
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(
+            f"Required environment variable '{name}' is not set. "
+            "Check your Railway / Vercel environment variables or your local .env file."
+        )
+    return value
 
 
 def _int_env(name: str, default: int) -> int:
@@ -73,23 +88,52 @@ def _bool_env(name: str, default: bool) -> bool:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    supabase_url = os.getenv("SUPABASE_URL")
-    if not supabase_url:
-        raise RuntimeError("SUPABASE_URL must be set.")
-    supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    if not supabase_service_role_key:
-        raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY must be set.")
+    # ------------------------------------------------------------------ #
+    # Hard-required — app will NOT start if any of these are missing.     #
+    # ------------------------------------------------------------------ #
+    supabase_url = _require_env("SUPABASE_URL")
+    supabase_service_role_key = _require_env("SUPABASE_SERVICE_ROLE_KEY")
+    supabase_anon_key = _require_env("SUPABASE_ANON_KEY")
+    openrouter_api_key = _require_env("OPENROUTER_API_KEY")
+
+    # ------------------------------------------------------------------ #
+    # CORS — at least one origin is mandatory; an empty list silently     #
+    # blocks every browser request.                                       #
+    # ------------------------------------------------------------------ #
     raw_origins = os.getenv("API_CORS_ALLOWED_ORIGINS", "")
-    api_cors_allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+    api_cors_allowed_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+    if not api_cors_allowed_origins:
+        raise RuntimeError(
+            "API_CORS_ALLOWED_ORIGINS must contain at least one origin "
+            "(e.g. https://your-app.vercel.app). "
+            "An empty value blocks all browser requests."
+        )
+
+    # ------------------------------------------------------------------ #
+    # Stripe — only required when billing is active.                      #
+    # ------------------------------------------------------------------ #
+    credit_enforcement_enabled = _bool_env("CREDIT_ENFORCEMENT_ENABLED", False)
+    stripe_secret_key = os.getenv("STRIPE_SECRET_KEY", "")
+    stripe_webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    if credit_enforcement_enabled:
+        if not stripe_secret_key:
+            raise RuntimeError(
+                "STRIPE_SECRET_KEY must be set when CREDIT_ENFORCEMENT_ENABLED=true."
+            )
+        if not stripe_webhook_secret:
+            raise RuntimeError(
+                "STRIPE_WEBHOOK_SECRET must be set when CREDIT_ENFORCEMENT_ENABLED=true."
+            )
+
     raw_admin_user_ids = os.getenv("ADMIN_USER_IDS", "")
-    admin_user_ids = tuple(user_id.strip() for user_id in raw_admin_user_ids.split(",") if user_id.strip())
+    admin_user_ids = tuple(uid.strip() for uid in raw_admin_user_ids.split(",") if uid.strip())
 
     return Settings(
         supabase_url=supabase_url,
-        supabase_anon_key=os.getenv("SUPABASE_ANON_KEY"),
+        supabase_anon_key=supabase_anon_key,
         supabase_service_role_key=supabase_service_role_key,
         api_cors_allowed_origins=api_cors_allowed_origins,
-        openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
+        openrouter_api_key=openrouter_api_key,
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/"),
         context_max_output_tokens=_int_env("CONTEXT_MAX_OUTPUT_TOKENS", 2048),
         context_summary_trigger_ratio=_float_env("CONTEXT_SUMMARY_TRIGGER_RATIO", 0.70),
@@ -106,9 +150,9 @@ def get_settings() -> Settings:
         supabase_storage_bucket=os.getenv("SUPABASE_STORAGE_BUCKET", "pantheon-files"),
         admin_user_ids=admin_user_ids,
         low_balance_threshold=_float_env("LOW_BALANCE_THRESHOLD", 5.0),
-        credit_enforcement_enabled=_bool_env("CREDIT_ENFORCEMENT_ENABLED", False),
-        stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
-        stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
+        credit_enforcement_enabled=credit_enforcement_enabled,
+        stripe_secret_key=stripe_secret_key,
+        stripe_webhook_secret=stripe_webhook_secret,
         top_up_min_usd=_float_env("TOP_UP_MIN_USD", 1.0),
         top_up_max_usd=_float_env("TOP_UP_MAX_USD", 500.0),
         credits_per_usd=_float_env("CREDITS_PER_USD", 1.0 / 0.03),

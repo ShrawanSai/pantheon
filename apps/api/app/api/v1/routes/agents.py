@@ -65,7 +65,12 @@ async def create_agent(
 
     existing_user = await db.get(User, user_id)
     if existing_user is None:
-        db.add(User(id=user_id, email=email))
+        try:
+            db.add(User(id=user_id, email=email))
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            existing_user = await db.get(User, user_id)
 
     now = datetime.now(timezone.utc)
     agent = Agent(

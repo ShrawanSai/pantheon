@@ -73,9 +73,12 @@ async def session_naming(
     )
 
     try:
+        # Safely substitute user content to prevent prompt injection.
+        # Escape braces first, then use .format() which is now safe.
+        safe_message = first_message[:1000].replace("{", "{{").replace("}", "}}")
         raw = await ainvoke_text(
             alias="llama",
-            prompt=_NAME_PROMPT.format(message=first_message[:1000]),
+            prompt=_NAME_PROMPT.format(message=safe_message),
         )
         name = _clean_name(raw)
         if not name:

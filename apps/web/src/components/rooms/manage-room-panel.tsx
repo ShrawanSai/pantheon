@@ -151,7 +151,11 @@ export function ManageRoomPanel({ room, agents, allAgents, onClose }: ManageRoom
             return;
         }
         const ids = Array.from(addingIds);
-        await Promise.all(ids.map(id => assignAgentMutation.mutateAsync(id)));
+        const results = await Promise.allSettled(ids.map(id => assignAgentMutation.mutateAsync(id)));
+        const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+        if (failures.length > 0) {
+            console.warn("Some agent assignments failed:", failures);
+        }
         setAddingIds(new Set());
         setIsAddingExpert(false);
     };

@@ -11,6 +11,7 @@ from typing import Any, Literal, Protocol, Type
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 
+from apps.api.app.core.config import get_settings
 from pantheon_llm.openrouter_langchain import SUPPORTED_LLMS
 
 _LOGGER = logging.getLogger(__name__)
@@ -105,10 +106,14 @@ _TOOL_DEFINITIONS = {
 }
 
 class OpenAICompatibleGateway:
-    def __init__(self):
-        api_key = os.getenv("OPENROUTER_API_KEY", "dummy_key")
-        base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    def __init__(self) -> None:
+        # Always read from the settings singleton so the fail-fast contract in
+        # get_settings() is respected and "dummy_key" can never silently slip through.
+        settings = get_settings()
+        self._client = AsyncOpenAI(
+            api_key=settings.openrouter_api_key,
+            base_url=settings.openrouter_base_url,
+        )
 
     async def generate(self, request: GatewayRequest) -> GatewayResponse:
         if request.model_alias not in SUPPORTED_LLMS:
